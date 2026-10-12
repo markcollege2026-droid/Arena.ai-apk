@@ -207,8 +207,12 @@ jobs:
             ls -la docs/evidence || true
             # Print the guard diagnostics into the workflow log as well, so the evidence is readable
             # without downloading the artifact.
-            echo "=== guard diagnostics from the device ==="
-            tail -n 60 docs/evidence/device-logcat.txt || true
+            echo "=== live site smoke test ==="
+            grep -E "live smoke|evaluateJavascript" docs/evidence/device-logcat.txt || true
+            echo "=== guard decisions on the device ==="
+            grep -E "watchdog|refused|recovery|start=|load \\(" docs/evidence/device-logcat.txt || true
+            echo "=== third-party requests that the policy refused ==="
+            grep -E "blocked by CORS policy" docs/evidence/device-logcat.txt | head -n 5 || true
             test ! -f /tmp/instrumented-failed
 
       - name: Publish instrumented test evidence
