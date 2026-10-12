@@ -11,7 +11,8 @@ paraphrased.
 | [38287200419](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38287200419) | `b3853fe` | first build | 4 unit-test failures (test bugs) |
 | [38287613538](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38287613538) | `8697d6c` | after fixing those | unit + APK green; instrumented suite did not compile (3 wrong `WebSettings` getters) |
 | [38288257746](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288257746) | `4252a89` | after fixing those | unit + APK green; emulator: 32 tests, 1 failure (test built a `Message` with no target handler) |
-| [38288999321](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288999321) | `b34907f` | after that fix | **unit-tests, build-apk and instrumented-tests all green** |
+| [38288999321](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288999321) | `b34907f` | after that fix | unit-tests, build-apk and instrumented-tests all green |
+| [38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091) | `5134404`, tag `v1.0.0` | the release run | **all four jobs green, including `Publish release`** - this is the run whose APKs are on the [release](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0) |
 
 Environment for the green run: `ubuntu-24.04` (image `20261004.327.1`), Temurin JDK `17.0.20+1`,
 Gradle 8.11 via the committed wrapper, AGP 8.7.3, compileSdk/targetSdk 35, minSdk 24, emulator
@@ -89,10 +90,16 @@ ok: one launcher entry only
 
 Checksums of the artifacts of this run (also uploaded as `APK-SHA256SUMS.txt`):
 
+Release run (`v1.0.0`) - these are the bytes attached to the release:
+
 ```
-7c434a8147ac7d4882b529633bd1283dfee9a8c65a489568e76739e251d944b7  app/build/outputs/apk/debug/app-debug.apk
-36ebcf7ab390c57269dac0f034e05d58d1478074b4f2e513c606964215a411ff  app/build/outputs/apk/release/app-release.apk
+ac9a86673d0c18faa14e806712b3e89fdd929b57bc4449c107ee7e7c5743ec1f  app/build/outputs/apk/debug/app-debug.apk
+dcf418e8438071badf57f52411533f9b2a9fa987b07e52311ffc6af608500a3a  app/build/outputs/apk/release/app-release.apk
 ```
+
+For comparison, the previous run (`b34907f`) produced
+`7c434a81...d944b7` (debug) and `36ebcf7a...411ff` (release) from identical sources - the difference is
+the signing block's timestamps, not the code, which is why every run prints its own checksums.
 
 `application-debuggable` is absent from the release badging - the check asserts its absence, so a
 debuggable release APK fails the build rather than shipping.
@@ -106,6 +113,17 @@ Tests on emulator-5554 - 14 passed
 ```
 
 ### Guard decisions captured on the device (`adb logcat -s ArenaWebViewLocked:V`)
+
+### The live site, on the device
+
+```
+I ArenaWebViewLocked: live smoke test: url after load = https://arena.ai/
+I ArenaWebViewLocked: live smoke test diagnostics:
+I ArenaWebViewLocked: evaluateJavascript returned: 2
+```
+
+(`evaluateJavascript` runs `(function(){return 1+1;})()` in the page - a correct `2` means the site's
+JavaScript is executing, not merely that a URL was reached.)
 
 Policy and start-up:
 

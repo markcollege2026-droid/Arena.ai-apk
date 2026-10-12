@@ -34,8 +34,27 @@ and nothing in the app touches Arena.ai authentication, CAPTCHA or access rules.
   pop-up routing, escape attempts, watchdog recovery, back handling); the live-site smoke test skips
   itself when the emulator has no route to arena.ai.
 
+On the emulator the wrapper reached `https://arena.ai/`, the site's own JavaScript executed
+(`evaluateJavascript` returned `2`), and the page's third-party beacons
+(`static.cloudflareinsights.com`, `browser-intake-us3-datadoghq.com`) were refused by the policy.
+
 See [TEST_REPORT.md](../TEST_REPORT.md) for what each test proves and [EVIDENCE.md](EVIDENCE.md) for the
-raw CI output, including the SHA-256 of both APKs.
+raw CI output.
+
+## Checksums
+
+Built and published by [run 38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091)
+from commit `5134404` (tag `v1.0.0`):
+
+```
+dcf418e8438071badf57f52411533f9b2a9fa987b07e52311ffc6af608500a3a  app-release.apk   (42,420 bytes)
+ac9a86673d0c18faa14e806712b3e89fdd929b57bc4449c107ee7e7c5743ec1f  app-debug.apk     (53,560 bytes)
+```
+
+Verify with `sha256sum app-release.apk` (or `certutil -hashfile app-release.apk SHA256` on Windows)
+before installing; `APK-SHA256SUMS.txt` and the full `aapt2` badging output are attached next to the
+APKs. APKs are not bit-for-bit reproducible across builds (signing timestamps), so rebuilding from
+source yields a different checksum than the one above.
 
 ## Signing
 

@@ -10,9 +10,10 @@ Everything below is the output of the CI run that built the APK attached to the
 | APK build + artifact inspection | `aapt2 dump badging` on the shipped release APK | **all 10 checks passed** |
 | Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` | **32 tests, 0 failures** |
 
-Run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288999321 ·
-commit `b34907f` · runner `ubuntu-24.04`, Temurin JDK 17.0.20, Gradle 8.11 (wrapper, hash-pinned),
-AGP 8.7.3, compileSdk/targetSdk 35, minSdk 24.
+Release run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091 ·
+tag `v1.0.0` · commit `5134404` · runner `ubuntu-24.04`, Temurin JDK 17.0.20, Gradle 8.11 (wrapper,
+hash-pinned), AGP 8.7.3, compileSdk/targetSdk 35, minSdk 24. The run before it (`b34907f`, run
+38288999321) produced the same results; the checksums below are the ones on the release page.
 
 ## 1. JVM suite - 1640 tests, 0 failures
 
@@ -71,9 +72,15 @@ ok: launcher entry present / one launcher entry only
 ```
 
 ```
-7c434a8147ac7d4882b529633bd1283dfee9a8c65a489568e76739e251d944b7  app-debug.apk
-36ebcf7ab390c57269dac0f034e05d58d1478074f2e513c606964215a411ff  app-release.apk
+dcf418e8438071badf57f52411533f9b2a9fa987b07e52311ffc6af608500a3a  app-release.apk   (42,420 bytes)
+ac9a86673d0c18faa14e806712b3e89fdd929b57bc4449c107ee7e7c5743ec1f  app-debug.apk     (53,560 bytes)
 ```
+
+These are the exact bytes attached to
+[release v1.0.0](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0)
+(`APK-SHA256SUMS.txt` next to them in the release and in the `arena-webview-apk` artifact). APK bytes
+are not bit-for-bit reproducible across runs - the signing block carries timestamps - so a rebuild
+produces its own checksum; the one that matters is the one printed by the run that produced the file.
 
 The "not debuggable" check is an assertion, so a debuggable release APK fails the build instead of
 shipping.
@@ -106,6 +113,15 @@ The emulator has a network path to arena.ai, so the smoke test exercised the rea
 shows, in order:
 
 * the app printing its policy and loading `arena.ai` (`load (startup): arena.ai`);
+* the smoke test landing on the site and executing script in its page context:
+
+  ```
+  I ArenaWebViewLocked: live smoke test: url after load = https://arena.ai/
+  I ArenaWebViewLocked: evaluateJavascript returned: 2
+  ```
+
+  i.e. the app is on `https://arena.ai/` and `evaluateJavascript("(function(){return 1+1;})()")`
+  returned the correct result, which is only possible when JavaScript is actually running in the page;
 * **the site's own JavaScript executing** - console messages originating from
   `https://arena.ai/_next/static/chunks/18zyla74w09g6.js` and `https://arena.ai/rpc/static/web-vitals.js`;
 * **third-party requests being refused** - Chromium reports `blocked by CORS policy` for
