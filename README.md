@@ -14,6 +14,15 @@ or download the `arena-webview-apk` artifact from the [Actions runs](https://git
 > *cannot* police. Read [TEST_REPORT.md](TEST_REPORT.md) for what has actually been executed and
 > measured, and [docs/EVIDENCE.md](docs/EVIDENCE.md) for the raw CI output.
 
+**1.1.0 fixes the sign-in failure reported on the first build**: entering an email in either the
+"Continue with Google" form or Arena.ai's own email form did nothing, because Google's sign-in scripts
+were not on the allow-list (its identity UI is served from content-hashed paths that cannot be pinned in
+advance) and because a CAPTCHA widget's *iframe* was being judged as if it wanted to replace the app's
+page. An iframe is now judged as an embedded document - a widget may render in the page, while the app
+itself is still never navigated to a third-party host - and every refusal is written to logcat with its
+reason, host and path. [TEST_REPORT.md §2b](TEST_REPORT.md) has the full account, including why a green
+test suite could not see it.
+
 ---
 
 ## 1. Build it yourself

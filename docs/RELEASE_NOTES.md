@@ -98,7 +98,14 @@ raw CI output.
 
 ## Checksums
 
-For 1.1.0: PENDING - the run that builds and publishes the 1.1.0 APK prints both hashes
+For 1.1.0, from the green run [38321983881](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38321983881) (commit `4685e71`):
+
+```
+6184548f1af25b4e90102834ebced1b92576fa1fe6777b888e7a2aade634bad3  app/build/outputs/apk/release/app-release.apk
+86d9bdc8405cd4fcee96b4b3d840bb0c57a174596ef1b433c833804eff3d445a  app/build/outputs/apk/debug/app-debug.apk
+```
+
+and the same run prints both hashes
 (`APK-SHA256SUMS.txt` next to the APKs). Nothing is claimed here until that run exists.
 
 For reference, the 1.0.0 release was built by

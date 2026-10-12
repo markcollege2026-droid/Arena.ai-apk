@@ -8,11 +8,11 @@ the end of this file.
 | Suite | Where | Result |
 | --- | --- | --- |
 | Security core (URL policy, allow-list, back navigation, manifest, source invariants) | JVM, JDK 17 - **run locally while preparing this release** (see §1) | **2225 tests, 0 failures** |
-| Same suite, authoritative build | JVM, GitHub runner, JDK 17 (`unit-tests` job) | PENDING - CI run for 1.1.0 |
-| APK build + artifact inspection | `aapt2 dump badging` on the shipped release APK | PENDING - CI run for 1.1.0 |
-| Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` (52 tests) | PENDING - CI run for 1.1.0 |
+| Same suite, authoritative build | JVM, GitHub runner, JDK 17 (`unit-tests` job) | **passed** - run [38321983881](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38321983881), `BUILD SUCCESSFUL in 43s` |
+| APK build + artifact inspection | `aapt2 dump badging` on the shipped release APK | **passed** - `versionName='1.1.0'`, minSdk 24 / targetSdk 35, `INTERNET` + `ACCESS_NETWORK_STATE` only, release APK sha256 `6184548f…bad3` |
+| Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` (52 tests) | **passed** - 52/52, `Finished 52 tests on emulator-5554 - 14`, `BUILD SUCCESSFUL in 1m 57s` |
 
-Nothing in this file is a prediction: rows marked PENDING are filled in from the run that produces the
+Nothing in this file is a prediction: every row is filled in from the run that produces the
 APK, and a claim that is not backed by a run is written as unverified.
 
 ## 1. JVM suite - 2225 tests, 0 failures

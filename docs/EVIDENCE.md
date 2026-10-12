@@ -14,6 +14,7 @@ paraphrased.
 | [38288999321](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288999321) | `b34907f` | after that fix | unit-tests, build-apk and instrumented-tests all green |
 | [38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091) | `5134404`, tag `v1.0.0` | the 1.0.0 release run | **all four jobs green, including `Publish release`** - this is the run whose APKs are on the [release](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0) |
 | [38297414026](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38297414026) | `cb94dee` | first 1.1.0 run (Google sign-in + in-app CAPTCHA) | `unit-tests` and `build-apk` green; `instrumented-tests` 45/46 - one test called a WebView method off the main thread (a bug in the test, fixed) |
+| [38321983881](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38321983881) (push) and [38321979886](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38321979886) (PR) | `4685e71` | the fix for the failure a user hit on the built APK (a widget frame is judged as an embedded document; Google's asset paths are no longer enumerated) | **all three jobs green in both runs**: `unit-tests`, `build-apk`, `instrumented-tests` 52/52. The run's device log is quoted in §6b and §7 |
 
 Environment for the green run: `ubuntu-24.04` (image `20261004.327.1`), Temurin JDK `17.0.20+1`,
 Gradle 8.11 via the committed wrapper, AGP 8.7.3, compileSdk/targetSdk 35, minSdk 24, emulator
@@ -253,11 +254,12 @@ rendering and not a pixel-level assertion.
 
 ---
 
-# The 1.1.0 run
+# The 1.1.0 runs
 
-Everything in this section is filled in from the GitHub Actions run that builds the 1.1.0 APK, in the
-same verbatim style as above. Until the run exists, the entries below say PENDING; nothing here is a
-prediction.
+Everything in this section is filled in from the GitHub Actions runs that build and test the 1.1.0 APK,
+in the same verbatim style as above: commit `cb94dee` (the first attempt, which is where the failure a
+user hit was reproduced) and commit `4685e71` (the fix, which is what the release is built from).
+Nothing here is a prediction.
 
 ## 4. Job `unit-tests` (1.1.0, commit `cb94dee`) - passed
 
@@ -273,16 +275,55 @@ That run's suite was the 1930-test one; the allow-list fix described in §7 adde
 have caught the field failure, so the current suite is 2225 tests (see §0). The same job failed on the
 first attempt of this change with the `aapt2` resource error quoted in §0.
 
-## 4b. Job `unit-tests` (current commit) - PENDING
+## 4b. Job `unit-tests` (this release, commit `4685e71`) - passed
 
-Filled in from the run that builds the APK published with this release, in the same verbatim style.
+```
+2026-10-12T23:24:51.7495215Z gradle/wrapper/gradle-wrapper.jar: OK
+2026-10-12T23:24:52.9436013Z ✓ Found known Gradle Wrapper JAR files:
+2026-10-12T23:24:52.9437081Z   2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046 gradle/wrapper/gradle-wrapper.jar
+2026-10-12T23:25:33.8727424Z > Task :app:compileDebugUnitTestJavaWithJavac
+2026-10-12T23:25:36.2710601Z > Task :app:testDebugUnitTest
+2026-10-12T23:25:36.2718155Z BUILD SUCCESSFUL in 43s
+2026-10-12T23:25:36.2718630Z 21 actionable tasks: 20 executed, 1 from cache
+```
 
-## 5. Job `build-apk` (1.1.0) - passed
+The suite Gradle just ran is the 2225-test one described in §0 (the JVM half is Android-free and
+deterministic, so the local count and the CI count are the same sources); the wrapper-jar checksum step
+ran before it, as designed.
 
-Badging and checksums are printed by the run that produces the 1.1.0 APK; the section below is filled in
-from the run that publishes it.
+## 5. Job `build-apk` (this release, commit `4685e71`) - passed
+
+```
+2026-10-12T23:26:45.9423843Z package: name='app.arenawebview.locked' versionCode='2' versionName='1.1.0' platformBuildVersionName='15' platformBuildVersionCode='35' compileSdkVersion='35' compileSdkVersionCodename='15'
+2026-10-12T23:26:45.9425470Z minSdkVersion:'24'
+2026-10-12T23:26:45.9425878Z targetSdkVersion:'35'
+2026-10-12T23:26:45.9426390Z uses-permission: name='android.permission.INTERNET'
+2026-10-12T23:26:45.9426931Z uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+2026-10-12T23:26:45.9428796Z application: label='Arena WebView (Locked)' icon='res/BW.xml'
+2026-10-12T23:26:45.9429327Z launchable-activity: name='app.arenawebview.locked.MainActivity'  label='' icon=''
+2026-10-12T23:26:45.9439703Z ok: package id
+2026-10-12T23:26:45.9453564Z ok: has a version name
+2026-10-12T23:26:45.9467798Z ok: INTERNET permission
+2026-10-12T23:26:45.9481749Z ok: no CAMERA permission
+2026-10-12T23:26:45.9495955Z ok: no location permission
+2026-10-12T23:26:45.9509895Z ok: no storage permission
+2026-10-12T23:26:45.9524636Z ok: no READ_CONTACTS
+2026-10-12T23:26:45.9537371Z ok: not debuggable
+2026-10-12T23:26:45.9551450Z ok: launcher entry present
+2026-10-12T23:26:45.9564416Z ok: one launcher entry only
+2026-10-12T23:26:45.9862792Z 6184548f1af25b4e90102834ebced1b92576fa1fe6777b888e7a2aade634bad3  app/build/outputs/apk/release/app-release.apk
+2026-10-12T23:26:45.9862792Z 86d9bdc8405cd4fcee96b4b3d840bb0c57a174596ef1b433c833804eff3d445a  app/build/outputs/apk/debug/app-debug.apk
+2026-10-12T23:26:47.1766031Z Artifact arena-webview-apk has been successfully uploaded! Final size is 98042 bytes. Artifact ID is 11778558530
+```
+
+Those are the hashes of *this commit's* build. APK bytes are not reproducible across builds (signing
+timestamps), so the hashes in the release that ships are the ones `Publish release` prints for the same
+run - and the release page carries its own `APK-SHA256SUMS.txt`.
 
 ## 6. Job `instrumented-tests` (1.1.0, commit `cb94dee`) - 46 tests, one test-thread bug (fixed)
+
+> This is the *first* 1.1.0 run, kept because it is the evidence for the bug described in §2 of
+> [TEST_REPORT.md](../TEST_REPORT.md). The current run is §6b.
 
 ```
 > Task :app:connectedDebugAndroidTest
@@ -361,3 +402,56 @@ The three gaps it protects against, each of which alone was enough to make a for
 | `www.gstatic.com` pinned to `/accounts/`, `/gsi/`, `/recaptcha/` | Google's identity UI bundle lives under `/_/mss/boq-identity/_/js/...` - the page rendered its static markup and never became interactive (the "Loading" layer the user saw over the typed address) | `ssl.gstatic.com` and `www.gstatic.com` are asset-only hosts **without** path restrictions, a reviewed exception pinned by `AllowlistRegressionTest` |
 | An iframe was evaluated as the app's own page | Asset-only hosts are refused as pages, so `www.google.com/recaptcha/enterprise/anchor` never rendered - and a form that needs the widget's token can never be submitted | New `TrafficClass.SUBDOCUMENT`: an embedded document is judged with the same host/path rules but may be an asset host; the app itself is still refused |
 | `challenges.cloudflare.com` pinned to `/turnstile/` only | Turnstile renders inside `/cdn-cgi/challenge-platform/...`, so its frame was refused | Both prefixes are allowed, and neither host can ever be the page |
+
+## 6b. Job `instrumented-tests` (this release, commit `4685e71`) - 52/52, all green
+
+```
+2026-10-12T23:28:41.8444464Z > Task :app:connectedDebugAndroidTest
+2026-10-12T23:28:41.8505738Z Starting 52 tests on emulator-5554 - 14
+2026-10-12T23:28:51.8466003Z emulator-5554 - 14 Tests 6/52 completed. (0 skipped) (0 failed)
+2026-10-12T23:29:01.8399513Z emulator-5554 - 14 Tests 12/52 completed. (0 skipped) (0 failed)
+2026-10-12T23:29:11.8401083Z emulator-5554 - 14 Tests 15/52 completed. (0 skipped) (0 failed)
+2026-10-12T23:29:18.4400248Z Finished 52 tests on emulator-5554 - 14
+2026-10-12T23:29:19.1943803Z BUILD SUCCESSFUL in 1m 57s
+2026-10-12T23:29:19.1944257Z 61 actionable tasks: 55 executed, 6 from cache
+```
+
+The three tests this release added for the failure itself are in that run: the sign-in window's frame
+rules (a CAPTCHA frame loads in place; a refused frame does not end the hand-off), the main client's
+frame rules (widget frames render; the same URLs still cannot become the page), and the probe assertion
+below.
+
+### The device log, verbatim (same run, `docs/evidence/device-logcat.txt`)
+
+```
+10-12 23:29:07.831  5973  6021 I ArenaWebViewLocked: refused sub-resource: HOST_NOT_ALLOWED host=www.googletagmanager.com path=/gtag/js
+10-12 23:29:07.839  5973  6021 I ArenaWebViewLocked: refused sub-resource: HOST_NOT_ALLOWED host=static.cloudflareinsights.com path=/beacon.min.js/v4bc70e2c01a94c73b74392e4234840661791215815920
+10-12 23:29:08.733  5973  6021 I ArenaWebViewLocked: refused sub-resource: HOST_NOT_ALLOWED host=browser-intake-us3-datadoghq.com path=/api/v2/rum
+10-12 23:29:10.326  5973  6021 I ArenaWebViewLocked: refused document: HOST_NOT_ALLOWED host=evil.example path=/definitely-not-allowed
+10-12 23:29:10.689  5973  5973 W ArenaWebViewLocked: recovery (onPageStarted:HOST_NOT_ALLOWED) from https://evil.example/definitely-not-allowed
+10-12 23:29:15.742  5973  6022 I ArenaWebViewLocked: refused sub-resource: HOST_NOT_ALLOWED host=www.googletagmanager.com path=/gtag/js
+10-12 23:29:15.743  5973  6022 I ArenaWebViewLocked: refused sub-resource: HOST_NOT_ALLOWED host=static.cloudflareinsights.com path=/beacon.min.js/v4bc70e2c01a94c73b74392e4234840661791215815920
+10-12 23:29:16.769  5973  5992 I ArenaWebViewLocked: refused sub-resource: HOST_NOT_ALLOWED host=evil.example path=/steal
+10-12 23:29:16.808  5973  5992 I ArenaWebViewLocked: refused sub-resource: HOST_NOT_ALLOWED host=evil.example path=/tracker.js
+10-12 23:29:17.010  5973  5992 I ArenaWebViewLocked: refused document: HOST_NOT_ALLOWED host=evil.example path=/step2
+10-12 23:29:17.089  5973  5992 I ArenaWebViewLocked: refused sub-resource: SCHEME_NOT_HTTPS host= path=/x.js
+10-12 23:29:03.395  5973  5992 I ArenaWebViewLocked: live smoke test: url after load = https://arena.ai/
+10-12 23:29:09.415  5973  5992 I ArenaWebViewLocked: evaluateJavascript returned: 2
+10-12 23:29:01.670  5973  5992 I ArenaWebViewLocked: google sign-in probe: url=https://accounts.google.com/v3/signin/identifier?flowEntry=ServiceLogin&flowName=GlifWebSignIn&dsh=S-351856751:1791847739799923
+10-12 23:29:01.673  5973  5992 I ArenaWebViewLocked: google sign-in probe result: "SIGNIN_FORM_PRESENT | NO_REJECTION_TEXT | title=Sign in - Google Accounts | len=221 | text=Loading Sign in Use your Google Account Email or phone Forgot email? Not your computer? Use Guest mode to sign in privately. Learn more about using Guest mode Next Create account English (United State"
+10-12 23:29:06.279  5973  5992 I ArenaWebViewLocked: captcha probe result: "https://www.gstatic.com/recaptcha/releases/nY0xPItgwtlvjEjk2TqdwOQz/recaptcha__en.js ;; https://www.google.com/recaptcha/enterprise.js?render=6LeTGMcsAAAAALuIlkVwIxaAuZA8VledA6d3Nnb0 ;; https://static.cloudflareinsights.com/beacon.min.js/v4bc70e2c01a94c73b74392e4234840661791215815920 ;; https://www.google.com/recaptcha/enterprise.js?render=6LeTGMcsAAAAALuIlkVwIxaAuZA8VledA6d3Nnb0 ;; window.grecaptcha present"
+```
+
+Read literally:
+
+* **the refusals are now visible and correctly classified**, with `document` and `sub-resource` kept
+  apart: everything refused on the two real pages is the site's own analytics (Googletagmanager,
+  Cloudflare Insights, Datadog RUM) plus `evil.example` from the escape tests - and `SCHEME_NOT_HTTPS`
+  for the plain-HTTP probe, with an empty host, exactly as designed;
+* **nothing on the sign-in page's own critical path is refused any more.** The previous run's refusal
+  that mattered - Google's identity bundle under `www.gstatic.com/_/mss/...` - no longer appears; the
+  only refusals during that page load are `accounts.youtube.com/accounts/CheckConnection` and
+  `play.google.com/log`, i.e. Google's optional telemetry, and the probe now *asserts* this
+  (`no host on the third-party allow-list may be recorded as refused`), so it cannot silently come back;
+* `window.grecaptcha present` on the real Arena.ai page, with the reCAPTCHA Enterprise widget script
+  being served from the allowed hosts - the widget whose *frame* previously could not render.
