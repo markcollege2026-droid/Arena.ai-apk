@@ -31,6 +31,18 @@ as the flows tolerate, and without the wrapper ever touching a credential or a c
   the window would have lingered; and every hidden pop-up leaked, because the teardown was posted
   through `WebView.post()` on a view that is never attached, so after three pop-ups the app would have
   refused all further `window.open()` calls. Details in TEST_REPORT.md §2.
+* **The bug that mattered most, found by a user report and fixed here.** The first build could open the
+  sign-in screens but could not submit an email in either form (the prompt sat superimposed over the
+  typed address). Three silent policy gaps caused it: Google's identity UI is served from content-hashed
+  paths under `www.gstatic.com/_/mss/...` that the allow-list had pinned away (so the page never became
+  interactive), CAPTCHA widget **iframes** were judged as if they were the app's own page (so the widget
+  never rendered and no form could get its token), and Turnstile's real challenge frame lives under
+  `/cdn-cgi/challenge-platform/`, not `/turnstile/`. Fixed with a new `SUBDOCUMENT` traffic class (an
+  iframe may embed an asset host; the app is still never navigated to one), asset-only hosts without
+  brittle path pins where Google's paths are content-hashed (a reviewed exception, pinned by test),
+  Turnstile's real paths, refusal logging (one logcat line per distinct refused destination), and a
+  device-side invariant that fails the build if any allow-listed host is ever refused while the real
+  sign-in page and the site's CAPTCHAs load.
 * **A third bug, found by CI:** the new sign-in copy contained an unescaped apostrophe in a string
   resource, which `aapt2` rejects - a resource rule the JVM suite could not see. Fixed, and
   `ResourcePolicyTest` now applies that rule (plus duplicate resource names and the network-config
@@ -63,11 +75,11 @@ and nothing in the app touches Arena.ai authentication, CAPTCHA or access rules.
 
 ## Verified for this release
 
-* **1930 JVM tests, 0 failures** against a real `javac` and JVM while preparing the change (269-case URL
-  table x 7 assertions, allow-list regression over the whole enforced set, back navigation, metrics,
+* **2225 JVM tests, 0 failures** against a real `javac` and JVM while preparing the change (272-case URL
+  table x 8 assertions, allow-list regression over the whole enforced set, back navigation, metrics,
   policy purity, manifest + network security config, source invariants). The GitHub Actions run re-runs
   the same suite with the project's JDK 17/Gradle toolchain and is the authoritative result.
-* **46 instrumented tests** on an API 34 emulator: WebView settings, navigation/redirect/iframe/request
+* **52 instrumented tests** on an API 34 emulator: WebView settings, navigation/redirect/iframe/request
   guards, all three pop-up outcomes, the sign-in window itself (hosting, reuse, close, back), escape
   attempts, watchdog recovery, back handling, downloads - plus two device probes that *log* what Google
   and the site actually served. On the first 1.1.0 run 45 passed; the one failure was a test reading a

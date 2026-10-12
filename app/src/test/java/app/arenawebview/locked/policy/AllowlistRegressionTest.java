@@ -111,18 +111,38 @@ public class AllowlistRegressionTest {
     }
 
     @Test
-    public void everyThirdPartyAssetEntryIsPathScopedAndResourceOnly() {
+    public void everyThirdPartyAssetEntryIsResourceOnlyAndReviewableAtItsPathScope() {
+        // Everything third-party is asset-only: none of these hosts can ever be the app's page.
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
             if (entry.isProduct() || entry.isSignIn()) {
                 continue;
             }
-            assertTrue("third-party asset entry must be path scoped: " + entry.host(),
-                    entry.isPathRestricted());
-            assertTrue("third-party asset entry must be resource only: " + entry.host(),
+            assertTrue("third-party entry must be resource only (never a page): " + entry.host(),
                     entry.isResourceOnly());
             for (String prefix : entry.pathPrefixes()) {
                 assertTrue("prefix must start with '/': " + prefix, prefix.startsWith("/"));
             }
+        }
+
+        // Path restrictions are the rule; the hosts below are the reviewed exceptions, and they are
+        // exceptions for one reason: Google serves its identity UI from content-hashed paths that change
+        // with every deployment, so any prefix list would break sign-in again (it did once - see
+        // TEST_REPORT.md). Widening this set must be a deliberate edit here as well.
+        List<String> deliberatelyUnrestricted = Arrays.asList("ssl.gstatic.com", "www.gstatic.com");
+        for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
+            if (entry.isProduct() || entry.isSignIn() || entry.isPathRestricted()) {
+                continue;
+            }
+            {
+                assertTrue("a path-unrestricted third-party host must be a reviewed exception: " + entry.host(),
+                        deliberatelyUnrestricted.contains(entry.host()));
+                assertTrue("a path-unrestricted host must still be asset-only: " + entry.host(),
+                        entry.isResourceOnly());
+            }
+        }
+        for (String host : deliberatelyUnrestricted) {
+            assertTrue("the reviewed exception list must match reality: " + host,
+                    ArenaAllowlist.thirdPartyHosts().contains(host));
         }
     }
 
@@ -137,12 +157,31 @@ public class AllowlistRegressionTest {
         assertEquals("a host must never be listed twice: " + hosts,
                 hosts.size(), new java.util.HashSet<String>(hosts).size());
 
-        for (String path : Arrays.asList("/accounts/t.js", "/gsi/c.js", "/recaptcha/r.js")) {
-            PolicyResult result = config.evaluateRequest("https://www.gstatic.com" + path);
-            assertTrue("merged path must stay reachable: " + path, result.isAllowed());
+        // Two groups want the same host (sign-in assets and the reCAPTCHA bundles both live on
+        // www.gstatic.com): whichever is wider must survive the merge, or one flow silently loses its
+        // assets - which is exactly the class of bug this whole change is about.
+        for (String path : Arrays.asList("/accounts/t.js", "/gsi/c.js", "/recaptcha/r.js",
+                "/_/mss/boq-identity/_/js/k=boq-identity.AccountsSignInUi.en.x/y")) {
+            assertTrue("merged path must stay reachable: " + path,
+                    config.evaluateRequest("https://www.gstatic.com" + path).isAllowed());
         }
-        assertFalse("unlisted path must stay refused",
-                config.evaluateRequest("https://www.gstatic.com/translate/t.js").isAllowed());
+        assertTrue("the wider (unrestricted) entry must win the merge",
+                config.findByHost("www.gstatic.com").pathPrefixes().isEmpty());
+
+        // The merge itself: two restricted groups union their prefixes, and an unrestricted entry stays
+        // unrestricted instead of being narrowed by the other group.
+        List<AllowEntry> union = ArenaAllowlist.merge(Arrays.asList(
+                Arrays.asList(AllowEntry.resourceOnly("merge.example", Arrays.asList("/a/"), "one")),
+                Arrays.asList(AllowEntry.resourceOnly("merge.example", Arrays.asList("/b/"), "two"))));
+        assertEquals(Arrays.asList("/a/", "/b/"), union.get(0).pathPrefixes());
+
+        List<AllowEntry> widened = ArenaAllowlist.merge(Arrays.asList(
+                Arrays.asList(AllowEntry.resourceOnly("merge.example", Arrays.asList("/a/"), "one")),
+                Arrays.asList(AllowEntry.resourceOnly("merge.example",
+                        java.util.Collections.<String>emptyList(), "two"))));
+        assertTrue("an unrestricted group must not be narrowed by a restricted one",
+                widened.get(0).pathPrefixes().isEmpty());
+        assertEquals("and the host must not be duplicated", 1, widened.size());
     }
 
     @Test

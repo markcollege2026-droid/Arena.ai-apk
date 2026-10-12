@@ -39,12 +39,14 @@ is Google's server-side policy and this app does not work around it (README §3,
 
 | Guarantee | Implementation | Evidence |
 | --- | --- | --- |
-| Only `https://<exact allow-listed host>` is reachable; no wildcards, no suffix matching | `policy/UrlPolicy.java`, `policy/AllowEntry.java`, `policy/PolicyConfig.java` | `UrlPolicyTest` (269 cases x 7 assertions), `AllowlistRegressionTest` |
+| Only `https://<exact allow-listed host>` is reachable; no wildcards, no suffix matching | `policy/UrlPolicy.java`, `policy/AllowEntry.java`, `policy/PolicyConfig.java` | `UrlPolicyTest` (272 cases x 8 assertions), `AllowlistRegressionTest` |
 | Refused navigations never happen; refused requests are answered in-process (`403`, empty body) and never sent | `web/ArenaWebViewClient.shouldOverrideUrlLoading`, `shouldInterceptRequest` | `NavigationGuardTest`, `UrlPolicyTest` |
 | Redirect hops are refused | same request hook (each hop is a request) + `WebResourceRequest.isRedirect()` accounting | `NavigationGuardTest.refusesRedirectsToThirdParties`, `PolicyCases` |
 | Pop-ups cannot create a second surface and cannot escape | `web/ArenaWebChromeClient.onCreateWindow`, `web/PopupRouterClient` | `PopupBlockingTest` (12 tests: routed / refused / promoted, plus window bookkeeping) |
 | The one extra window (a sign-in hand-off) is still inside the app, still policed, and always closable | `ui/AuthWindow.java` (a `FrameLayout`, not an activity), `MainActivity.onSignInWindowRequested` / `closeSignInWindow` / `checkSignInWindowUrl` | `AuthWindowTest`, `PopupBlockingTest`, `SourceInvariantsTest.signInNeverLeavesTheApp`, `theOnlyWebViewsAreThePrimaryOneAndTheSignInWindow` |
 | The sign-in window is fenced: only Google's sign-in pages and the return hop to an Arena.ai page are displayable in it; everything else - including asset-only hosts - is refused and the window is destroyed | `PopupRouterClient.handle` (`isSignInNavigation` / `isProductNavigation` on every navigation, not just the first) | `PopupBlockingTest.aPromotedSignInWindowStillRefusesEverythingOutsideTheHandOff`, `PolicyCases` rows for `ssl.gstatic.com` as a document |
+| An iframe may embed an asset-only host, but the app is never navigated to one | `policy/UrlPolicy.TrafficClass.SUBDOCUMENT`, `web/ArenaWebViewClient.shouldOverrideUrlLoading` (`isForMainFrame()`), `PolicyConfig.evaluateSubdocument` | `PolicyCases` (frame rows + the document refusals for the same URLs), `UrlPolicyTest.anEmbeddableWidgetHostIsStillNeverAReachablePage`, `NavigationGuardTest` (device) |
+| An allow-listed host is never refused while a real page loads | consistency of the allow-list with itself, asserted on a device against the live sign-in page and the site's widgets | `GoogleSignInLiveTest.refusedAllowListedHosts` (fails the build if a Google/widget host is recorded as refused) |
 | A challenge can be displayed but never answered, automated or bypassed | CAPTCHA hosts are `Role.ASSET` entries pinned to `/recaptcha/` and `/turnstile/`; no bridge, no injected script, no solver | `AllowlistRegressionTest`, `PolicyCases` (path escapes and every other path on those hosts refused) |
 | No other app is ever opened (browser, store, share sheet, file picker, download UI) | `MainActivity.startActivity*` overrides; `onShowFileChooser` refusal; `DownloadListener` refusal | `EscapeAttemptTest` (with an `ActivityMonitor` asserting zero launches), `DownloadGuardTest` |
 | TLS errors are never bypassed | `ArenaWebViewClient.onReceivedSslError` → `cancel()`; no `proceed()` exists | `SourceInvariantsTest.tlsErrorsAreNeverBypassed` |
@@ -68,14 +70,19 @@ is Google's server-side policy and this app does not work around it (README §3,
 2. **Anything the page does entirely in memory** (e.g. computing, rendering, storing data in
    localStorage/IndexedDB in the app's private storage). That is normal browser behaviour and is not
    restricted; the app's private storage is not readable by other apps, and backups are disabled.
-3. **Bot-protection challenges are displayed, not defeated.** This build allows the widget hosts
+3. **A CAPTCHA that demanded a pop-up window would be refused.** Widget hosts are asset-only, so they
+   can be embedded but never become a window or the visible page. Both reCAPTCHA and Turnstile render in
+   iframes (verified on the device: the anchor frame is what the real site loads), so the supported layout
+   is the one the site uses - but a challenge implementation that insisted on a separate window would be
+   blocked rather than allowed to take over the screen.
+4. **Bot-protection challenges are displayed, not defeated.** This build allows the widget hosts
    (`www.google.com/recaptcha/`, `www.recaptcha.net/recaptcha/`, `www.gstatic.com/recaptcha/`,
    `challenges.cloudflare.com/turnstile/`) so a challenge renders and **you** answer it. The app never
    pre-answers, scripts, automates or solves a challenge: it has no JavaScript bridge, injects no script
    into the page and has no access to what you type. Turning both switches off
    (`ENABLE_CAPTCHA_WIDGETS`, `ENABLE_GOOGLE_SIGN_IN`) returns the build to refusing those hosts
    entirely, and the unit suite then asserts the smaller host list.
-4. **Google's sign-in pages may refuse to load in an embedded browser.** Google documents sign-in inside
+5. **Google's sign-in pages may refuse to load in an embedded browser.** Google documents sign-in inside
    a WebView as unsupported and commonly answers `accounts.google.com` with a "this browser or app may
    not be secure" page. This is a server-side decision by Google that this app neither bypasses nor
    obscures (no user-agent spoofing, no Custom Tab, no `ACTION_VIEW`); the device log records which page

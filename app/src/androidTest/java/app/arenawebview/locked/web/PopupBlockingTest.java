@@ -214,6 +214,73 @@ public class PopupBlockingTest {
         assertEquals(1, host.metrics().count(PolicyMetrics.Counter.SIGN_IN_WINDOWS));
     }
 
+
+    /**
+     * Google's own sign-in page embeds frames (its identity scripts, sometimes a challenge). Those are
+     * embedded documents, not navigations, and they must load in place - judging them as "the window
+     * navigating somewhere" would either cancel them or drag them into the main WebView.
+     */
+    @Test
+    public void embeddedFramesInsideTheSignInWindowLoadInPlace() {
+        final RecordingGuardHost host = new RecordingGuardHost(POLICY);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
+            @Override
+            public void run() {
+                WebView popup = new WebView(InstrumentationRegistry.getInstrumentation().getTargetContext());
+                PopupRouterClient client = new PopupRouterClient(host, popup, null);
+
+                assertFalse(client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.navigation(
+                        "https://accounts.google.com/signin/v2/identifier")));
+
+                // A frame the sign-in page needs: allowed as an embedded document, never routed elsewhere.
+                assertFalse(client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.subframe(
+                        "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=x")));
+                assertFalse(client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.subframe(
+                        "https://ssl.gstatic.com/accounts/gsi/iframe.html")));
+            }
+        });
+        assertEquals("an embedded frame must never be pulled into the main WebView", 0,
+                host.metrics().count(PolicyMetrics.Counter.ROUTED_POPUPS));
+        assertNull(host.lastLoadedUrl);
+        assertEquals(1, host.metrics().count(PolicyMetrics.Counter.SIGN_IN_WINDOWS));
+    }
+
+    /**
+     * A refused frame on the sign-in page costs that frame and nothing else. Tearing the window down
+     * because some tracker on Google's page was refused would end the sign-in for no reason.
+     */
+    @Test
+    public void aRefusedFrameInsideTheSignInWindowDoesNotEndTheHandOff() {
+        final RecordingGuardHost host = new RecordingGuardHost(POLICY);
+        final WebView[] holder = new WebView[1];
+        final boolean[] closed = new boolean[1];
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
+            @Override
+            public void run() {
+                WebView popup = new WebView(InstrumentationRegistry.getInstrumentation().getTargetContext());
+                holder[0] = popup;
+                PopupRouterClient client = new PopupRouterClient(host, popup, new Runnable() {
+                    @Override
+                    public void run() {
+                        closed[0] = true;
+                    }
+                });
+                assertFalse(client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.navigation(
+                        "https://accounts.google.com/signin/v2/identifier")));
+
+                assertTrue("an unlisted frame must be refused",
+                        client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.subframe(
+                                "https://evil.example/ad")));
+
+                assertTrue("the hand-off must survive a refused frame", client.isSignInWindow());
+                assertFalse("the window must not be torn down", closed[0]);
+            }
+        });
+        assertEquals(1, host.metrics().count(PolicyMetrics.Counter.BLOCKED_REQUESTS));
+        assertEquals("a refused frame is not a refused pop-up", 0,
+                host.metrics().count(PolicyMetrics.Counter.BLOCKED_POPUPS));
+    }
+
     /**
      * {@code window.close()} is how the hand-off ends: the page inside the window calls it, and the app
      * must hear about it (that is what hides and destroys the in-app window). It is delivered by the

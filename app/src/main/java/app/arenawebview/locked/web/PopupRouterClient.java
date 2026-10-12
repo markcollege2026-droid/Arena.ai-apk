@@ -54,16 +54,19 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             finish();
             return true;
         }
-        return handle(request.getUrl().toString());
+        return handle(request.getUrl().toString(), request.isForMainFrame());
     }
 
     @Override
     @SuppressWarnings("deprecation")
     public boolean shouldOverrideUrlLoading(WebView view, String url) {
-        return handle(url);
+        // The legacy callback carries no frame information; treating it as a main frame is the
+        // conservative reading (Chromium uses the WebResourceRequest overload above on every API level
+        // this app supports).
+        return handle(url, true);
     }
 
-    private boolean handle(String url) {
+    private boolean handle(String url, boolean mainFrame) {
         GuardHost host = host();
         if (url == null || url.isEmpty()) {
             finish();
@@ -74,16 +77,39 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             // so a subsequent real navigation can still be routed, but never display anything.
             return false;
         }
-        PolicyResult result = host.policy().evaluateNavigation(url);
+        // The same rule as the main client: a main frame may only ever be an Arena.ai page or a sign-in
+        // page, while a document embedded in this window (an iframe) is judged as an embedded document -
+        // otherwise a widget frame - or a CAPTCHA that Google's own sign-in page embeds - would be
+        // cancelled and the flow would die half-way through.
+        PolicyResult result = mainFrame
+                ? host.policy().evaluateNavigation(url)
+                : host.policy().evaluateSubdocument(url);
         if (!result.isAllowed()) {
-            host.metrics().increment(PolicyMetrics.Counter.BLOCKED_POPUPS);
+            if (mainFrame) {
+                host.metrics().increment(PolicyMetrics.Counter.BLOCKED_POPUPS);
+            } else {
+                host.metrics().increment(PolicyMetrics.Counter.BLOCKED_REQUESTS);
+            }
             host.metrics().recordBlock(result.reason(), result.canonicalHost(), url);
-            host.onPopupBlocked(url, result);
-            finish();
-            // Always cancel the navigation in this window: nothing unverified is ever rendered.
+            if (mainFrame) {
+                host.onPopupBlocked(url, result);
+            }
+            // A refused sub-document only loses its frame: tearing down the whole window would end a
+            // sign-in because some tracker on Google's page was refused. A refused *navigation*
+            // (main frame) still ends the window - it has nowhere legitimate left to go.
+            if (mainFrame || !promotedToSignInWindow) {
+                finish();
+            }
             return true;
         }
 
+        if (!mainFrame) {
+            // An embedded document inside this window: let it load in place. It cannot become the app's
+            // page and it cannot take the window anywhere.
+            return false;
+        }
+
+        // --- main frame: only a sign-in step or an Arena.ai page may live here --------------------
         boolean signInStep = host.policy().isSignInNavigation(url);
         boolean sitePage = host.policy().isProductNavigation(url);
         if (promotedToSignInWindow ? (signInStep || sitePage) : signInStep) {
@@ -95,8 +121,6 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             //   1. Google's own pages (the OAuth consent page, the identifier and password steps), and
             //   2. the return hop to Arena.ai's callback URL, which is where the site reads the result and
             //      usually closes the window itself with window.close().
-            // Returning false lets the window navigate itself; every hop is judged by the same policy, so
-            // the window can never end up on a host the main view would have refused.
             if (!promotedToSignInWindow) {
                 promotedToSignInWindow = true;
                 host.metrics().increment(PolicyMetrics.Counter.SIGN_IN_WINDOWS);
@@ -108,9 +132,8 @@ public final class PopupRouterClient extends ArenaWebViewClient {
         }
 
         // Any other allowed page: keep the single-view guarantee - hand it to the one visible WebView and
-        // discard the throwaway window Chromium created. This is also the defensive branch for a
-        // hypothetical future allow-list role that is neither a product page nor a sign-in step: such a URL
-        // can never gain a window of its own.
+        // discard the throwaway window Chromium created. A URL the policy allows but that is not part of
+        // this hand-off can never gain a window of its own.
         host.metrics().increment(PolicyMetrics.Counter.ROUTED_POPUPS);
         host.onPopupRouted(url);
         host.loadVerifiedDestination(url, "popup");

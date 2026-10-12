@@ -144,11 +144,18 @@ public final class ArenaAllowlist {
         entries.add(AllowEntry.signIn("accounts.google.com", Collections.<String>emptyList(),
                 "Google's account/sign-in pages - the \"Continue with Google\" hand-off. Displayed only "
                         + "as a page, only while the user is signing in."));
-        entries.add(AllowEntry.resourceOnly("ssl.gstatic.com", paths("/accounts/", "/gsi/"),
-                "Assets for Google's sign-in and account pages."));
-        entries.add(AllowEntry.resourceOnly("www.gstatic.com", paths("/accounts/", "/gsi/"),
-                "Assets for Google's sign-in and account pages."));
-        entries.add(AllowEntry.resourceOnly("apis.google.com", paths("/js/", "/gsi/"),
+        // Google's static asset hosts serve their identity UI from content-hashed, opaque paths
+        // (www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.AccountsSignInUi.en.<hash>/...) and
+        // the path changes with every deployment, so enumerating prefixes here is guaranteed to break
+        // sign-in eventually - it did. These are asset-only entries: they can be fetched and embedded in
+        // an iframe, and the wrapper is never navigated to them (the DOCUMENT rule in UrlPolicy).
+        entries.add(AllowEntry.resourceOnly("ssl.gstatic.com", Collections.<String>emptyList(),
+                "Google's static asset host: sub-resources only, never a page. No path restriction "
+                        + "because the paths are content-hashed and change without notice."));
+        entries.add(AllowEntry.resourceOnly("www.gstatic.com", Collections.<String>emptyList(),
+                "Google's static asset host (identity UI bundles under /_/mss/, images, gsi, reCAPTCHA): "
+                        + "sub-resources only, never a page."));
+        entries.add(AllowEntry.resourceOnly("apis.google.com", paths("/js/", "/gsi/", "/_/"),
                 "Google's client-side identity/gapi scripts loaded by the sign-in hand-off."));
         entries.add(AllowEntry.resourceOnly("fonts.gstatic.com", Collections.singletonList("/s/"),
                 "Web font files used by Google's pages (cosmetic only)."));
@@ -166,12 +173,15 @@ public final class ArenaAllowlist {
         List<AllowEntry> entries = new ArrayList<AllowEntry>();
         entries.add(AllowEntry.resourceOnly("www.google.com", Collections.singletonList("/recaptcha/"),
                 "reCAPTCHA widget assets only - never Google search, accounts or APIs, and never a page."));
-        entries.add(AllowEntry.resourceOnly("www.gstatic.com", Collections.singletonList("/recaptcha/"),
-                "reCAPTCHA static assets only - never a page."));
+        // www.gstatic.com is already an asset-only entry without path restrictions (see signInEntries);
+        // the reCAPTCHA release bundles live under it too and merge() keeps the wider entry.
         entries.add(AllowEntry.resourceOnly("www.recaptcha.net", Collections.singletonList("/recaptcha/"),
                 "reCAPTCHA assets on the alternate domain Google documents for restricted networks."));
-        entries.add(AllowEntry.resourceOnly("challenges.cloudflare.com", Collections.singletonList("/turnstile/"),
-                "Cloudflare Turnstile widget assets only - never a page."));
+        entries.add(AllowEntry.resourceOnly("challenges.cloudflare.com",
+                paths("/turnstile/", "/cdn-cgi/challenge-platform/"),
+                "Cloudflare Turnstile widget assets and the challenge frame Cloudflare actually renders "
+                        + "the widget in (its own documentation shows the iframe comes from "
+                        + "/cdn-cgi/challenge-platform/) - never a page."));
         return Collections.unmodifiableList(entries);
     }
 
@@ -230,6 +240,13 @@ public final class ArenaAllowlist {
                 }
                 if (existing.role() != entry.role()) {
                     throw new IllegalStateException("Conflicting allow-list roles for " + entry.host());
+                }
+                if (existing.pathPrefixes().isEmpty() || entry.pathPrefixes().isEmpty()) {
+                    // One of the groups wants the whole host: keep it whole. Union-ing the prefixes here
+                    // would silently narrow the wider entry and break whichever flow needed it.
+                    byHost.put(entry.host(), new AllowEntry(entry.host(), Collections.<String>emptyList(),
+                            existing.purpose(), entry.role()));
+                    continue;
                 }
                 List<String> mergedPaths = new ArrayList<String>(existing.pathPrefixes());
                 for (String path : entry.pathPrefixes()) {

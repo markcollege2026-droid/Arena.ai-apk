@@ -53,7 +53,7 @@ sideloading and for CI verification, and it is not a production signing key.** S
 
 | Job | What it does |
 | --- | --- |
-| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (1930 tests) |
+| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (2225 tests) |
 | `build-apk` | Builds debug + release APKs, runs `aapt2 dump badging` assertions, writes `APK-SHA256SUMS.txt` |
 | `instrumented-tests` | Boots an API 34 emulator and runs `connectedDebugAndroidTest` (the live-site smoke test is skipped if the runner has no network path to arena.ai) |
 | `release` | On a `v*` tag: publishes a GitHub Release with both APKs, checksums, badging output and release notes |
@@ -76,21 +76,23 @@ configuration that could be swapped out at runtime.
 | 5 | No IP-literal hosts | IPv4/hex/decimal literals and non-ASCII hosts are refused |
 | 6 | Redirects re-validated | `shouldOverrideUrlLoading` and `shouldInterceptRequest` see every hop; the final URL is re-checked in the history and page-finished callbacks |
 | 7 | Sub-requests are checked too | `shouldInterceptRequest` refuses off-policy requests with an in-process empty response (nothing leaves the device) |
-| 8 | Service worker traffic is checked | `ServiceWorkerController` client applies the same policy |
-| 9 | Pop-ups are captured, never shown | `window.open`/`target="_blank"` is intercepted; an allowed URL is routed into the single visible WebView, anything else is refused |
-| 10 | The only second window is the sign-in window | Google sign-in is an OAuth *pop-up* flow: the page that opened it receives the result through `window.opener`, so that one window has to stay alive. It is a plain child view of the same activity (never a second activity, never a system browser, never a Custom Tab), it can always be closed by the user, and the guard destroys it when the flow ends (`window.close()`), when the user closes it, when back is pressed, when the activity is destroyed, or when the watchdog sees it off-policy |
-| 11 | The sign-in window is fenced to the hand-off | Inside it, only Google's sign-in pages (`accounts.google.com`) and the return hop to an Arena.ai page are displayable. Every other URL - a third party, a look-alike, or an asset-only host such as `ssl.gstatic.com` - is refused and the window is torn down, even though the main WebView would have allowed that host as an asset |
-| 12 | CAPTCHAs are shown, never solved | The reCAPTCHA/Turnstile widget hosts are path-scoped *asset* entries, so a challenge renders inside the arena.ai page and the user answers it. The wrapper never reads, pre-answers, automates or bypasses a challenge, and there is no JavaScript bridge through which it could |
-| 13 | Sign-in never leaves the app | No `ACTION_VIEW`, no `androidx.browser`/Custom Tab, no chooser, no `startActivity` - `signInNeverLeavesTheApp` fails the build if any of those appears in the sources |
-| 14 | External apps are unreachable | `startActivity`/`startActivityForResult`/`startActivities` are overridden to refuse, incoming intents are only logged, and off-policy custom schemes never reach the platform |
-| 15 | Downloads never start | A `DownloadListener` refuses and reports; the platform `DownloadManager` is never used |
-| 16 | File uploads / media capture / geolocation are denied | `WebChromeClient` refusals |
-| 17 | TLS failures are fatal | `onReceivedSslError` always cancels, client-certificate requests and HTTP auth are cancelled |
-| 18 | Android Safe Browsing is on | `setSafeBrowsingEnabled(true)`; a hit is treated as a blocked navigation |
-| 19 | Back stays inside the app | Back closes the sign-in window first, then handles the app's own fullscreen video and overlay, then walks WebView history **only to entries that still pass policy**; leaving the app requires a double press |
-| 20 | The app cannot be steered from outside | One exported launcher activity, no deep links, no services/receivers/providers |
-| 21 | Resource files cannot break the build quietly | A JVM test parses every XML file under `res/` and applies the two rules `aapt2` enforces - no unescaped apostrophe/quote in a string resource, no duplicate resource name - and asserts that every page-capable host is pinned in `network_security_config.xml` |
-| 22 | Runtime re-verification | A 1-second watchdog re-checks `WebView.getUrl()` and rewinds to the start page if it is ever off-policy; a lost renderer process tears the WebView down |
+| 8 | An embedded document is not a navigation | An iframe/frame/embed is judged as an *embedded* document: a CAPTCHA or identity widget frame may render from an asset-only host, while the same URL is refused as the app's own page. A sub-document cannot replace the page, navigate the app or leave it |
+| 9 | Every refusal is named in the log | One logcat line per distinct refused destination - reason, host and path, never the query string (`refused sub-resource: PATH_NOT_ALLOWED host=www.gstatic.com path=/...`). A page that half-works is diagnosable instead of mysterious |
+| 10 | Service worker traffic is checked | `ServiceWorkerController` client applies the same policy |
+| 11 | Pop-ups are captured, never shown | `window.open`/`target="_blank"` is intercepted; an allowed URL is routed into the single visible WebView, anything else is refused |
+| 12 | The only second window is the sign-in window | Google sign-in is an OAuth *pop-up* flow: the page that opened it receives the result through `window.opener`, so that one window has to stay alive. It is a plain child view of the same activity (never a second activity, never a system browser, never a Custom Tab), it can always be closed by the user, and the guard destroys it when the flow ends (`window.close()`), when the user closes it, when back is pressed, when the activity is destroyed, or when the watchdog sees it off-policy |
+| 13 | The sign-in window is fenced to the hand-off | Inside it, only Google's sign-in pages (`accounts.google.com`) and the return hop to an Arena.ai page are displayable. Every other URL - a third party, a look-alike, or an asset-only host such as `ssl.gstatic.com` - is refused and the window is torn down, even though the main WebView would have allowed that host as an asset |
+| 14 | CAPTCHAs are shown, never solved | The reCAPTCHA/Turnstile widget hosts are path-scoped *asset* entries, so a challenge renders inside the arena.ai page and the user answers it. The wrapper never reads, pre-answers, automates or bypasses a challenge, and there is no JavaScript bridge through which it could |
+| 15 | Sign-in never leaves the app | No `ACTION_VIEW`, no `androidx.browser`/Custom Tab, no chooser, no `startActivity` - `signInNeverLeavesTheApp` fails the build if any of those appears in the sources |
+| 16 | External apps are unreachable | `startActivity`/`startActivityForResult`/`startActivities` are overridden to refuse, incoming intents are only logged, and off-policy custom schemes never reach the platform |
+| 17 | Downloads never start | A `DownloadListener` refuses and reports; the platform `DownloadManager` is never used |
+| 18 | File uploads / media capture / geolocation are denied | `WebChromeClient` refusals |
+| 19 | TLS failures are fatal | `onReceivedSslError` always cancels, client-certificate requests and HTTP auth are cancelled |
+| 20 | Android Safe Browsing is on | `setSafeBrowsingEnabled(true)`; a hit is treated as a blocked navigation |
+| 21 | Back stays inside the app | Back closes the sign-in window first, then handles the app's own fullscreen video and overlay, then walks WebView history **only to entries that still pass policy**; leaving the app requires a double press |
+| 22 | The app cannot be steered from outside | One exported launcher activity, no deep links, no services/receivers/providers |
+| 23 | Resource files cannot break the build quietly | A JVM test parses every XML file under `res/` and applies the two rules `aapt2` enforces - no unescaped apostrophe/quote in a string resource, no duplicate resource name - and asserts that every page-capable host is pinned in `network_security_config.xml` |
+| 24 | Runtime re-verification | A 1-second watchdog re-checks `WebView.getUrl()` and rewinds to the start page if it is ever off-policy; a lost renderer process tears the WebView down |
 
 Failures are fail-closed: a URL that cannot be parsed, a null/empty URL, or a policy error results in
 a refusal plus an in-app explanation, never in a load.
@@ -110,13 +112,18 @@ flows tolerate:
 * `accounts.google.com` is the **only** third-party host that may ever become a visible page
   (`Role.SIGN_IN`), and only inside the in-app sign-in window. Google's OAuth pages live at many paths
   under that one host, so it is listed without a path restriction.
-* Everything else Google needs is an **asset-only** entry (`Role.ASSET`, raw-path-pinned, never
-  displayable as a page): `ssl.gstatic.com/accounts/`, `/gsi/`; `www.gstatic.com/accounts/`, `/gsi/`,
-  `/recaptcha/`; `apis.google.com/js/`, `/gsi/`; `fonts.gstatic.com/s/`;
-  `lh3.googleusercontent.com/a/` (account avatar images).
+* Everything else Google needs is an **asset-only** entry (`Role.ASSET`: it can be fetched and embedded
+  in an iframe, and the app is never navigated to it). These are path-pinned, with **two reviewed
+  exceptions**: `ssl.gstatic.com` and `www.gstatic.com` are unrestricted because Google serves its whole
+  identity UI from content-hashed paths
+  (`www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.AccountsSignInUi.en.<hash>/...`) that change
+  with every deployment - pinning them by prefix is guaranteed to break sign-in again. The other entries
+  stay scoped: `apis.google.com/js/`, `/gsi/`, `/_/`; `fonts.gstatic.com/s/`;
+  `lh3.googleusercontent.com/a/` (account avatars).
 * The CAPTCHA widget hosts are asset-only too: `www.google.com/recaptcha/`,
-  `www.recaptcha.net/recaptcha/`, `www.gstatic.com/recaptcha/` and
-  `challenges.cloudflare.com/turnstile/`.
+  `www.recaptcha.net/recaptcha/`, `www.gstatic.com/recaptcha/` and `challenges.cloudflare.com` on
+  `/turnstile/` and `/cdn-cgi/challenge-platform/` (the frame Cloudflare's own documentation shows the
+  widget rendering in).
 
 Gmail, Drive, Docs, Play, `googleapis.com`, other `googleusercontent.com` hosts, Google Search outside
 `/recaptcha/`, and every other third party remain unreachable - they are not in `ArenaAllowlist`, and a
@@ -157,11 +164,17 @@ sends for the user to answer. The two switches are `ArenaAllowlist.ENABLE_GOOGLE
    allow-list are verified; a *completed* sign-in is not claimed. Arena.ai's own sign-in inside the same
    WebView is unaffected either way.
 6. **A CAPTCHA has to be answered by you.** The widget loads and renders (reCAPTCHA or Cloudflare
-   Turnstile), but the wrapper will not interact with it, so a challenge that never clears - or a site
-   that demands an unavailable third-party host - ends in the app's own "cannot load" message.
-7. **Redirects are re-validated per hop, not pre-enumerated.** If Arena.ai ever redirects to a host
+   Turnstile, in an iframe, from the widget hosts above), but the wrapper will not interact with it, so a
+   challenge that never clears - or a site that demands an unavailable third-party host - ends in the
+   app's own "cannot load" message.
+7. **A CAPTCHA that insists on a pop-up window would be refused.** Widget hosts are asset-only, so they
+   may render inside the page but can never *become* a window or the app's page. reCAPTCHA and Turnstile
+   both render in iframes, which is the layout this app supports; a challenge implementation that opened
+   its challenge in a separate window would be blocked. That is the deliberate trade for never letting a
+   third party take over the screen.
+8. **Redirects are re-validated per hop, not pre-enumerated.** If Arena.ai ever redirects to a host
    that is not on the list, the wrapper refuses and reports instead of following it.
-8. **The policy is Android-free unit-tested, but the WebView wiring is tested on an emulator.** Where
+9. **The policy is Android-free unit-tested, but the WebView wiring is tested on an emulator.** Where
    a claim depends on device behaviour it is marked as such in TEST_REPORT.md.
 
 ---
@@ -190,7 +203,7 @@ app/src/main/java/app/arenawebview/locked/
     BlockedResponses.java      the in-process 403 response
   ui/StatusOverlay.java        native "blocked / error" card
   ui/AuthWindow.java           in-app sign-in window (a view, not an activity)
-app/src/test/                  JVM tests: URL policy table (269 cases in this configuration) + invariants
+app/src/test/                  JVM tests: URL policy table (272 cases in this configuration) + invariants
 app/src/androidTest/           emulator tests (guards, escapes, live smoke)
 .github/workflows/android.yml  CI: tests, APK build + verification, release
 docs/                          evidence, release notes

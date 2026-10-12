@@ -260,4 +260,46 @@ public class SourceInvariantsTest {
                 main.contains("getIntent().getData()"));
         assertFalse(main.contains("getIntent().getStringExtra"));
     }
+
+    /**
+     * Every client that can decide the fate of a frame must ask the <em>frame</em> question.
+     *
+     * <p>This is the source-level guard for the defect that made sign-in dead in the field: an iframe
+     * judged with the navigation rules is refused as soon as it points at an asset-only host, so the
+     * CAPTCHA never renders and the form can never be submitted - and nothing in the app says why. Both
+     * {@code ArenaWebViewClient} and {@code PopupRouterClient} must therefore consult
+     * {@code evaluateSubdocument}; a new client that does not will fail here.</p>
+     */
+    @Test
+    public void everyClientThatSeesFramesAsksTheSubdocumentQuestion() throws Exception {
+        for (String file : new String[]{
+                "app/arenawebview/locked/web/ArenaWebViewClient.java",
+                "app/arenawebview/locked/web/PopupRouterClient.java"}) {
+            String source = code(file);
+            assertTrue(file + " must ask the embedded-document question as well as the navigation question",
+                    source.contains("evaluateSubdocument("));
+            assertTrue(file + " must only ask it for frames (isForMainFrame), never for the whole view",
+                    source.contains("isForMainFrame()"));
+        }
+    }
+
+    /**
+     * The three questions must stay three questions.
+     *
+     * <p>If {@code evaluateSubdocument} ever collapses back into {@code evaluateNavigation}, every widget
+     * frame is refused again - silently, because the page simply stops working. The traffic classes are
+     * distinct values, and the config must keep asking each of them.</p>
+     */
+    @Test
+    public void theThreeTrafficQuestionsStayDistinct() throws Exception {
+        String config = code("app/arenawebview/locked/policy/PolicyConfig.java");
+        for (String expected : new String[]{
+                "UrlPolicy.evaluate(rawUrl, this, UrlPolicy.TrafficClass.DOCUMENT)",
+                "UrlPolicy.evaluate(rawUrl, this, UrlPolicy.TrafficClass.SUBDOCUMENT)",
+                "UrlPolicy.evaluate(rawUrl, this, UrlPolicy.TrafficClass.SUBRESOURCE)"}) {
+            assertTrue("PolicyConfig must still ask this question: " + expected, config.contains(expected));
+        }
+        assertTrue("an embedded document needs its own traffic class",
+                code("app/arenawebview/locked/policy/UrlPolicy.java").contains("SUBDOCUMENT"));
+    }
 }

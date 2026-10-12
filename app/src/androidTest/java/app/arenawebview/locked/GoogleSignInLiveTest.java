@@ -12,6 +12,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import app.arenawebview.locked.policy.ArenaAllowlist;
+import app.arenawebview.locked.policy.PolicyMetrics;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -42,7 +47,7 @@ public class GoogleSignInLiveTest {
             "https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn&flowEntry=ServiceLogin";
 
     @Test
-    public void googleSignInPageIsReachableAndTheOutcomeIsRecorded() throws Exception {
+    public void googleSignInPageIsReachableAndNothingItNeedsIsRefused() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             scenario.onActivity(activity -> activity.loadVerifiedDestination(SIGN_IN_URL, "test:google-signin"));
             String url = waitForLoad(scenario);
@@ -76,7 +81,41 @@ public class GoogleSignInLiveTest {
             Log.i(TAG, "google sign-in probe result: " + probe);
             assertNotNull("the page must be inspectable (JavaScript runs on it)", probe);
             assertTrue("the probe must return something", probe.length() > 0);
+
+            // The regression that made sign-in forms dead in the field: the page's own scripts were
+            // refused by the allow-list, so the page rendered its static markup and never became
+            // interactive. A page the app allows to load must not have its own assets refused - if the
+            // allow-list is ever too narrow again, this fails in CI instead of in someone's hands.
+            List<String> refused = refusedAllowListedHosts();
+            assertTrue("hosts the app allows must never be refused while serving the sign-in page: "
+                    + refused, refused.isEmpty());
         }
+    }
+
+    /**
+     * Every refusal recorded since this test started, for a host the allow-list contains.
+     *
+     * <p>These are the hosts that exist only so a real page can work (Google's identity assets, the
+     * CAPTCHA widgets). Refusing one of them means the policy is <em>inconsistent with itself</em> - the
+     * destination is allowed for one traffic class and refused for another - and the visible result is a
+     * half-loaded page whose controls do nothing, which is exactly the failure this test was written
+     * after. First-party hosts cannot be refused at all, so they are not in scope here.</p>
+     */
+    private static List<String> refusedAllowListedHosts() {
+        List<String> refused = new ArrayList<String>();
+        for (PolicyMetrics.BlockEvent event : PolicyMetrics.get().recentBlocks()) {
+            String host = event.host();
+            if (host.isEmpty()) {
+                continue;
+            }
+            for (String allowed : ArenaAllowlist.thirdPartyHosts()) {
+                if (allowed.equals(host)) {
+                    refused.add(event.describe());
+                    break;
+                }
+            }
+        }
+        return refused;
     }
 
     /**
@@ -112,6 +151,13 @@ public class GoogleSignInLiveTest {
                     """);
             Log.i(TAG, "captcha probe result: " + probe);
             assertNotNull(probe);
+
+            // Same rule for the widget hosts: whatever the real page asks for from an allow-listed CAPTCHA
+            // host must be served. A widget whose frame or script is refused is a challenge that can never
+            // be shown - and a form that can therefore never be submitted.
+            List<String> refused = refusedAllowListedHosts();
+            assertTrue("hosts the app allows must never be refused while the site's CAPTCHAs load: "
+                    + refused, refused.isEmpty());
         }
     }
 

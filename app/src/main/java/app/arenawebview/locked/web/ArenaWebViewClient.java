@@ -3,6 +3,7 @@ package app.arenawebview.locked.web;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Build;
+import android.util.Log;
 import android.webkit.ClientCertRequest;
 import android.webkit.HttpAuthHandler;
 import android.webkit.RenderProcessGoneDetail;
@@ -13,6 +14,10 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import app.arenawebview.locked.policy.BlockReason;
 import app.arenawebview.locked.policy.PolicyMetrics;
@@ -38,6 +43,14 @@ import app.arenawebview.locked.policy.PolicyResult;
  */
 public class ArenaWebViewClient extends WebViewClient {
 
+    private static final String TAG = "ArenaWebViewLocked";
+
+    /** Refusals already written to logcat, so a busy page cannot flood the log. */
+    private static final int MAX_LOGGED_REFUSALS = 200;
+
+    private final Set<String> loggedRefusals =
+            Collections.synchronizedSet(new LinkedHashSet<String>());
+
     private final GuardHost host;
 
     public ArenaWebViewClient(GuardHost host) {
@@ -62,7 +75,12 @@ public class ArenaWebViewClient extends WebViewClient {
         String url = request.getUrl().toString();
         boolean mainFrame = request.isForMainFrame();
 
-        PolicyResult result = host.policy().evaluateNavigation(url);
+        // An iframe is judged as an embedded document, not as the app's page: a widget frame from an
+        // asset host is allowed to render, while the main frame may only ever be an Arena.ai or sign-in
+        // page. This is the difference between "the app can show this" and "the app can fetch this".
+        PolicyResult result = mainFrame
+                ? host.policy().evaluateNavigation(url)
+                : host.policy().evaluateSubdocument(url);
         if (result.isAllowed()) {
             if (mainFrame) {
                 host.metrics().increment(PolicyMetrics.Counter.ALLOWED_NAVIGATIONS);
@@ -120,6 +138,7 @@ public class ArenaWebViewClient extends WebViewClient {
         final String blockedUrl = url;
         final PolicyResult blockedResult = result;
         recordBlock(result, url, mainFrame, redirect);
+        logRefusal(result, url, mainFrame);
         if (mainFrame) {
             // shouldInterceptRequest runs on a background thread; hop to the UI thread before the host
             // touches any view.
@@ -131,6 +150,49 @@ public class ArenaWebViewClient extends WebViewClient {
             });
         }
         return BlockedResponses.create(result);
+    }
+
+    /**
+     * Writes one line per distinct refused destination to logcat.
+     *
+     * <p>Without this, a page whose script was refused simply behaves strangely - which is exactly how a
+     * sign-in form can end up dead with nothing to see. The line names the reason, the host and the path
+     * (never the query string), so a user report can be matched against the allow-list.</p>
+     */
+    private void logRefusal(PolicyResult result, String url, boolean mainFrame) {
+        String reason = result == null || result.reason() == null ? "?" : result.reason().name();
+        String host = result == null ? "" : result.canonicalHost();
+        String path = pathOnly(url);
+        synchronized (loggedRefusals) {
+            if (loggedRefusals.size() >= MAX_LOGGED_REFUSALS || !loggedRefusals.add(reason + "|" + host + path)) {
+                return;
+            }
+        }
+        Log.i(TAG, "refused " + (mainFrame ? "document" : "sub-resource") + ": " + reason
+                + " host=" + host + " path=" + path);
+    }
+
+    /** The raw path of a URL, without query or fragment, for the refusal log. */
+    private static String pathOnly(String url) {
+        if (url == null || url.isEmpty()) {
+            return "";
+        }
+        int schemeEnd = url.indexOf("://");
+        int start = schemeEnd < 0 ? 0 : schemeEnd + 3;
+        int slash = url.indexOf('/', start);
+        if (slash < 0) {
+            return "/";
+        }
+        int end = url.length();
+        int query = url.indexOf('?', slash);
+        int fragment = url.indexOf('#', slash);
+        if (query >= 0 && query < end) {
+            end = query;
+        }
+        if (fragment >= 0 && fragment < end) {
+            end = fragment;
+        }
+        return url.substring(slash, end);
     }
 
     // ---------------------------------------------------------------------------------------------

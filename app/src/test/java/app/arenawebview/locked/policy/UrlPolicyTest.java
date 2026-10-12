@@ -50,6 +50,11 @@ public class UrlPolicyTest {
         return rows;
     }
 
+    /** True when the case describes something embedded in a page rather than the app's own page. */
+    private static boolean inPage(UrlPolicy.TrafficClass trafficClass) {
+        return trafficClass != UrlPolicy.TrafficClass.DOCUMENT;
+    }
+
     @Test
     public void matchesExpectedOutcome() {
         PolicyResult result = UrlPolicy.evaluate(testCase.url, PRODUCTION, testCase.trafficClass);
@@ -135,6 +140,25 @@ public class UrlPolicyTest {
     }
 
     /** A null policy must fail closed rather than throw or allow. */
+    /**
+     * A frame and a page are asked different questions, and the answers must stay different: whatever a
+     * widget host is allowed to do as an embedded frame, the app itself is never navigated to it. This is
+     * the invariant that keeps "the CAPTCHA can render" from becoming "the app can browse a third party".
+     */
+    @Test
+    public void anEmbeddableWidgetHostIsStillNeverAReachablePage() {
+        for (String widgetUrl : new String[]{
+                "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=x",
+                "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/x",
+                "https://www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.x/y"}) {
+            assertFalse("a widget frame may never replace the app's page: " + widgetUrl,
+                    PRODUCTION.evaluateNavigation(widgetUrl).isAllowed());
+            assertEquals("and the refusal names the reason: " + widgetUrl,
+                    BlockReason.DOCUMENT_NOT_ALLOWED,
+                    PRODUCTION.evaluateNavigation(widgetUrl).reason());
+        }
+    }
+
     @Test
     public void missingPolicyFailsClosed() {
         assertFalse(UrlPolicy.evaluate("https://arena.ai/", null, UrlPolicy.TrafficClass.DOCUMENT).isAllowed());

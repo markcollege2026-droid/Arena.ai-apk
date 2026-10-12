@@ -1,6 +1,7 @@
 package app.arenawebview.locked.policy;
 
 import static app.arenawebview.locked.policy.UrlPolicy.TrafficClass.DOCUMENT;
+import static app.arenawebview.locked.policy.UrlPolicy.TrafficClass.SUBDOCUMENT;
 import static app.arenawebview.locked.policy.UrlPolicy.TrafficClass.SUBRESOURCE;
 
 import java.util.ArrayList;
@@ -315,16 +316,26 @@ public final class PolicyCases {
                 true, null);
         sub(cases, "reCAPTCHA static asset", "https://www.gstatic.com/recaptcha/releases/x/r.js",
                 true, null);
+        sub(cases, "Google asset host outside the old pinned paths is reachable as an asset",
+                "https://www.gstatic.com/images/branding/x.svg", true, null);
+        doc(cases, "but the app is never navigated to it",
+                "https://www.gstatic.com/images/branding/x.svg", false, BlockReason.DOCUMENT_NOT_ALLOWED);
         sub(cases, "reCAPTCHA on the alternate domain",
                 "https://www.recaptcha.net/recaptcha/api.js", true, null);
         sub(cases, "Turnstile widget", "https://challenges.cloudflare.com/turnstile/v0/api.js",
                 true, null);
-        sub(cases, "path traversal out of a widget path",
-                "https://www.gstatic.com/recaptcha/../translate/x", false, BlockReason.PATH_NOT_ALLOWED);
-        sub(cases, "percent-encoded path escape", "https://www.gstatic.com/recaptcha%2f..%2fx", false,
+        // Path escapes are checked on a host that is still path-pinned. (Google's static asset hosts are
+        // deliberately path-unrestricted now, because their paths are content-hashed and change without
+        // notice - see ArenaAllowlist.signInEntries.)
+        sub(cases, "path traversal out of a pinned path",
+                "https://lh3.googleusercontent.com/a/../../translate/x", false,
                 BlockReason.PATH_NOT_ALLOWED);
-        sub(cases, "Cloudflare host outside the widget path",
-                "https://challenges.cloudflare.com/cdn-cgi/x", false, BlockReason.PATH_NOT_ALLOWED);
+        sub(cases, "percent-encoded path escape", "https://lh3.googleusercontent.com/a%2f..%2fx", false,
+                BlockReason.PATH_NOT_ALLOWED);
+        frame(cases, "the Cloudflare challenge frame its own docs describe",
+                "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/x", true, null);
+        sub(cases, "Cloudflare host outside the widget paths",
+                "https://challenges.cloudflare.com/other/x", false, BlockReason.PATH_NOT_ALLOWED);
         doc(cases, "Turnstile host may never become the page",
                 "https://challenges.cloudflare.com/turnstile/v0/api.js", false,
                 BlockReason.DOCUMENT_NOT_ALLOWED);
@@ -345,5 +356,9 @@ public final class PolicyCases {
     private static void both(List<Case> out, String name, String url, boolean allowed, BlockReason reason) {
         out.add(new Case(name + " (document)", url, DOCUMENT, allowed, reason));
         out.add(new Case(name + " (subresource)", url, SUBRESOURCE, allowed, reason));
+    }
+
+    private static void frame(List<Case> out, String name, String url, boolean allowed, BlockReason reason) {
+        out.add(new Case(name, url, SUBDOCUMENT, allowed, reason));
     }
 }

@@ -18,6 +18,8 @@ import java.util.Locale;
  * <ul>
  *   <li>{@link #evaluateNavigation(String)} for anything that can become the visible document
  *       (main frame, iframes, redirects, {@code window.open} targets).</li>
+ *   <li>{@link #evaluateSubdocument(String)} for a document embedded in the page (iframe), which may
+ *       come from an asset host - that is how CAPTCHA and identity widgets are embedded.</li>
  *   <li>{@link #evaluateRequest(String)} for every network request the WebView makes
  *       (XHR/fetch, scripts, images, media, trackers, ...).</li>
  * </ul>
@@ -62,6 +64,17 @@ public final class PolicyConfig {
     /** Evaluate a URL that can become (or become part of) a rendered document. */
     public PolicyResult evaluateNavigation(String rawUrl) {
         return UrlPolicy.evaluate(rawUrl, this, UrlPolicy.TrafficClass.DOCUMENT);
+    }
+
+    /**
+     * Evaluate a document that is rendered <em>inside</em> a page (iframe/frame/embed).
+     *
+     * <p>Kept separate from {@link #evaluateNavigation(String)} so that "may this replace what the user
+     * is looking at?" and "may this be embedded in the page the user is looking at?" stay two different
+     * questions. A CAPTCHA widget frame must be allowed; the app must never be navigated to it.</p>
+     */
+    public PolicyResult evaluateSubdocument(String rawUrl) {
+        return UrlPolicy.evaluate(rawUrl, this, UrlPolicy.TrafficClass.SUBDOCUMENT);
     }
 
     /** Evaluate a sub-resource request (script, image, XHR, websocket-less fetch, ...). */

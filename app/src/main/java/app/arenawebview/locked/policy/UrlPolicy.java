@@ -24,12 +24,33 @@ import java.util.Locale;
  */
 public final class UrlPolicy {
 
-    /** Traffic classes differ only in whether network-capable schemes can ever be allowed. */
+    /**
+     * What the URL is being used for. The classes differ in two ways: which schemes can ever be allowed,
+     * and whether a host that exists only to serve assets may be used.
+     */
     public enum TrafficClass {
-        /** The URL can become the visible document: main frame, iframe, redirect target, popup. */
+        /**
+         * The URL can become the app's own visible page: the main frame, a pop-up window, a redirect the
+         * main frame follows. Nothing that is not a real page may ever end up here.
+         */
         DOCUMENT,
+        /**
+         * A document rendered <em>inside</em> a page: {@code <iframe>}, {@code <frame>}, {@code <embed>}.
+         *
+         * <p>This is deliberately not the same as {@link #DOCUMENT}. A CAPTCHA widget is a third-party
+         * document in an iframe - refusing those means the challenge can never render and the form that
+         * needs its token can never be submitted. A sub-document cannot replace the app's page (only the
+         * main frame can), cannot navigate the app anywhere and cannot escape the page it is embedded in,
+         * so it is treated like a resource request: same host and path rules, but usable.</p>
+         */
+        SUBDOCUMENT,
         /** The URL addresses a sub-resource: script, style, image, media, XHR/fetch, service worker. */
-        SUBRESOURCE
+        SUBRESOURCE;
+
+        /** True when this traffic can never become the app's own visible page. */
+        public boolean isInPage() {
+            return this != DOCUMENT;
+        }
     }
 
     private static final int MAX_HOST_LENGTH = 253;
@@ -96,7 +117,7 @@ public final class UrlPolicy {
                     // Inert empty document: the bootstrap of every embed/iframe.
                     return PolicyResult.allow("", rawUrl, null);
                 }
-                if (trafficClass == TrafficClass.SUBRESOURCE && "srcdoc".equalsIgnoreCase(remainder)) {
+                if (trafficClass.isInPage() && "srcdoc".equalsIgnoreCase(remainder)) {
                     // <iframe srcdoc> takes this URL; it is a same-origin, network-free document.
                     return PolicyResult.allow("", rawUrl, null);
                 }
@@ -178,8 +199,9 @@ public final class UrlPolicy {
         }
 
         if (trafficClass == TrafficClass.DOCUMENT && entry.isResourceOnly()) {
-            // A third-party widget asset load is fine; navigating the visible WebView to a third-party
-            // host never is.
+            // The app's own page is only ever an Arena.ai page or a sign-in page. A host that exists to
+            // serve assets may be fetched and may be embedded in an iframe (that is how CAPTCHA widgets
+            // work), but the wrapper is never navigated to it.
             return PolicyResult.block(BlockReason.DOCUMENT_NOT_ALLOWED, canonicalHost, rawUrl, "");
         }
 

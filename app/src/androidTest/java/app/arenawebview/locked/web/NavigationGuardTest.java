@@ -86,6 +86,67 @@ public class NavigationGuardTest {
         assertEquals(1, host.metrics().count(PolicyMetrics.Counter.BLOCKED_REQUESTS));
     }
 
+
+    /**
+     * A CAPTCHA widget is a third-party <em>document in an iframe</em>. Refusing those means the challenge
+     * can never render and any form that needs its token can never be submitted - which is exactly what
+     * happened to the sign-in forms of this app in the field. An embedded document is judged as an
+     * embedded document, not as the app's page.
+     */
+    @Test
+    public void allowsWidgetIframesThatAPageNeedsToRender() {
+        assertFalse("the reCAPTCHA anchor frame must be allowed to render",
+                client.shouldOverrideUrlLoading(webView, FakeWebResourceRequest.subframe(
+                        "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=6LeTGMcsAAAAA")));
+        assertFalse("a Google identity frame must be allowed to render",
+                client.shouldOverrideUrlLoading(webView, FakeWebResourceRequest.subframe(
+                        "https://www.gstatic.com/accounts/gsi/iframe.html")));
+        assertFalse("the Turnstile challenge frame must be allowed to render",
+                client.shouldOverrideUrlLoading(webView, FakeWebResourceRequest.subframe(
+                        "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2/x")));
+    }
+
+    /**
+     * ...but the very same URLs must never replace the app's own page: an iframe is not a navigation.
+     * This is the invariant that keeps "the widget can render" from turning into "the app can browse a
+     * third party".
+     */
+    @Test
+    public void refusesToNavigateTheAppItselfToAWidgetHost() {
+        assertTrue(client.shouldOverrideUrlLoading(webView, FakeWebResourceRequest.navigation(
+                "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=6LeTGMcsAAAAA")));
+        assertTrue(client.shouldOverrideUrlLoading(webView, FakeWebResourceRequest.navigation(
+                "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2/x")));
+        assertTrue(client.shouldOverrideUrlLoading(webView, FakeWebResourceRequest.navigation(
+                "https://www.gstatic.com/_/mss/boq-identity/_/js/k=boq-identity.x/y")));
+        assertEquals(3, host.metrics().count(PolicyMetrics.Counter.BLOCKED_NAVIGATIONS));
+    }
+
+    /** An iframe still cannot reach a host that is not on the allow-list at all. */
+    @Test
+    public void refusesIframesToUnlistedHosts() {
+        assertTrue(client.shouldOverrideUrlLoading(webView,
+                FakeWebResourceRequest.subframe("https://evil.example/frame")));
+        assertTrue(client.shouldOverrideUrlLoading(webView,
+                FakeWebResourceRequest.subframe("https://accounts.google.com.evil.example/frame")));
+        assertEquals(2, host.metrics().count(PolicyMetrics.Counter.BLOCKED_REQUESTS));
+    }
+
+    /**
+     * Every refusal is now named in logcat, once per distinct destination, so a page that only half works
+     * can be diagnosed from a log instead of guessed at. The line must carry the reason, the host and the
+     * path - and never the query string, which is where tokens live.
+     */
+    @Test
+    public void everyRefusalIsNamedInTheLogWithHostAndPathOnly() {
+        client.shouldInterceptRequest(webView, FakeWebResourceRequest.subresource(
+                "https://evil.example/steal?token=supersecret"));
+        assertEquals(1, host.metrics().count(PolicyMetrics.Counter.BLOCKED_REQUESTS));
+        String report = host.metrics().snapshot();
+        assertTrue("the diagnostics must name the refused host: " + report, report.contains("evil.example"));
+        assertFalse("no query string may be recorded: " + report, report.contains("supersecret"));
+    }
+
     @Test
     public void refusesRedirectsToThirdParties() {
         assertTrue(client.shouldOverrideUrlLoading(webView, FakeWebResourceRequest.redirect("https://evil.example/")));

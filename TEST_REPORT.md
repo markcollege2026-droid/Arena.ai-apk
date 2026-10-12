@@ -7,15 +7,15 @@ the end of this file.
 
 | Suite | Where | Result |
 | --- | --- | --- |
-| Security core (URL policy, allow-list, back navigation, manifest, source invariants) | JVM, JDK 17 - **run locally while preparing this release** (see §1) | **1930 tests, 0 failures** |
+| Security core (URL policy, allow-list, back navigation, manifest, source invariants) | JVM, JDK 17 - **run locally while preparing this release** (see §1) | **2225 tests, 0 failures** |
 | Same suite, authoritative build | JVM, GitHub runner, JDK 17 (`unit-tests` job) | PENDING - CI run for 1.1.0 |
 | APK build + artifact inspection | `aapt2 dump badging` on the shipped release APK | PENDING - CI run for 1.1.0 |
-| Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` (46 tests) | PENDING - CI run for 1.1.0 |
+| Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` (52 tests) | PENDING - CI run for 1.1.0 |
 
 Nothing in this file is a prediction: rows marked PENDING are filled in from the run that produces the
 APK, and a claim that is not backed by a run is written as unverified.
 
-## 1. JVM suite - 1930 tests, 0 failures
+## 1. JVM suite - 2225 tests, 0 failures
 
 `./gradlew :app:testDebugUnitTest` (the CI job) - and, while preparing this release, the same sources
 compiled and executed locally with `javac 1.8.0_152` plus a small JUnit-compatible runner, because this
@@ -25,14 +25,14 @@ that caught the resource bug described below.
 
 | Class | Tests | What it pins |
 | --- | --- | --- |
-| `UrlPolicyTest` | **1883** | **269 URL cases × 7 assertions each** (1.0.0 had 229 cases). Every case states the expected decision *and* the exact refusal reason. 229 cases are the base table; **40 more describe the sign-in/CAPTCHA configuration**, including the hosts that must stay refused *next to* Google's. |
+| `UrlPolicyTest` | **2176** | **272 URL cases × 8 assertions each** (1.0.0 had 229 cases). Every case states the expected decision *and* the exact refusal reason. 229 cases are the base table; **43 more describe the sign-in/CAPTCHA configuration**, including the hosts that must stay refused *next to* Google's, and the cross-check that a widget host embeddable in a frame is still never a reachable page. |
 | `AllowlistRegressionTest` | 11 | the exact enforced host list: first-party set, third-party set, "no host listed twice", "the enforced set is exactly the two reviewed lists", and that both capability switches are on in this build |
 | `BackNavigatorTest` | 5 | only history entries that still pass policy may be revisited; no history means "leave the app" |
 | `PolicyMetricsTest` | 6 | counters, bounded 50-entry block log, newest-first ordering, URL truncation, query/fragment stripping, reset |
 | `PolicyPurityTest` | 4 | no Android imports in `policy/`, no `java.net.URI`/`URL` parsing (parser differential = classic bypass), no logging or file access in the security core |
 | `ManifestPolicyTest` | 5 | one exported activity, two permissions, not debuggable, no backup, cleartext off, system-only trust anchors, and the network security config's pinned host set is a **subset of the runtime allow-list** |
 | `ResourcePolicyTest` | 5 | every XML file under `res/` parses; no string resource carries an unescaped `'` or `"` (the rule `aapt2` enforces); ids are unique and the ones the code uses are declared; every **page-capable** host is pinned in `network_security_config.xml` while asset-only hosts deliberately are not |
-| `SourceInvariantsTest` | 11 | comment-stripped source scan: no JavaScript bridge; TLS errors never proceeded; exactly one URL-loading call site; no `startActivity*` delegation; hardened settings present/unsafe ones absent; **the sign-in window is a view, not an activity**; **no `ACTION_VIEW`, no `androidx.browser`, no `createChooser`**; the hidden pop-up window is never attached to a view hierarchy by the pop-up plumbing |
+| `SourceInvariantsTest` | 13 | comment-stripped source scan: no JavaScript bridge; TLS errors never proceeded; exactly one URL-loading call site; no `startActivity*` delegation; hardened settings present/unsafe ones absent; **the sign-in window is a view, not an activity**; **no `ACTION_VIEW`, no `androidx.browser`, no `createChooser`**; the hidden pop-up window is never attached to a view hierarchy by the pop-up plumbing |
 
 Three things the new coverage is built to catch:
 
@@ -43,8 +43,12 @@ Three things the new coverage is built to catch:
    table asserts that Google Search, `/accounts/` and any other path on that host are refused, and that
    percent-encoded or `..` path escapes (`/recaptcha%2f..%2fx`) are refused as well.
 3. **An asset host becoming a page.** `ssl.gstatic.com/accounts/o/x.gif` is allowed as a *sub-resource*
-   and refused as a *document* (`DOCUMENT_NOT_ALLOWED`), which is what stops the sign-in mechanism from
-   being usable as a general-purpose window.
+   and refused as a *document* (`DOCUMENT_NOT_ALLOWED`), and the same holds for the CAPTCHA and Turnstile
+   frames: they may render inside the page, never as the page. This is what stops the sign-in mechanism
+   from becoming a general-purpose browser.
+4. **An allow-listed host being refused anyway.** The device probe now asserts that no host on the
+   third-party allow-list is recorded as refused while the real sign-in page and the site's CAPTCHA load -
+   the invariant that would have caught the field failure described in §2.
 
 Two real failures were found and fixed before this build. The first came out of the CI run for this
 change, which is the honest reason the local run is not the authority:
@@ -70,13 +74,15 @@ breaks that flow, so 1.1.0 has one carefully bounded exception.
 
 | Class | Tests | What it proves |
 | --- | --- | --- |
-| `PopupBlockingTest` | **12** | all three pop-up outcomes: an allowed URL is routed into the single visible WebView; a third party is refused, counted, and the window destroyed; **a sign-in URL keeps its window and it is shown in-app**; **the return hop to Arena.ai's callback stays in that window** (cancelling it would break the flow); **the window is still fenced** - an asset host or a third party is refused even after promotion; **a site pop-up is never promoted**; `window.close()` from the page is reported to the app; **hidden windows are released immediately**, and twelve pop-ups in a row do not trip the app's own three-window cap |
+| `PopupBlockingTest` | **14** | all three pop-up outcomes: an allowed URL is routed into the single visible WebView; a third party is refused, counted, and the window destroyed; **a sign-in URL keeps its window and it is shown in-app**; **the return hop to Arena.ai's callback stays in that window** (cancelling it would break the flow); **the window is still fenced** - an asset host or a third party is refused even after promotion; **a site pop-up is never promoted**; `window.close()` from the page is reported to the app; **hidden windows are released immediately**, and twelve pop-ups in a row do not trip the app's own three-window cap. **Plus the frame rules inside the sign-in window: a CAPTCHA/identity frame the page embeds loads in place and is never dragged into the main view, and a refused frame costs that frame only - it does not end the hand-off** |
 | `AuthWindowTest` | **5** | the sign-in window is part of the activity's own view hierarchy (no second activity), it hosts exactly the pop-up WebView, repeated hand-off navigations reuse the same window instead of stacking, the close button hides it and detaches the WebView, back closes it first and does not finish the activity |
 | `GoogleSignInLiveTest` | **2** | on a device: the app reaches `accounts.google.com`, the page that arrives is served by an allowed host, and the result is **logged** (which page Google actually served) rather than asserted; a second probe logs which CAPTCHA the real site references |
-| `SourceInvariantsTest` | 11 | the code-level fences listed in §1 - the sign-in support cannot introduce a Custom Tab, an `ACTION_VIEW`, a chooser or an extra activity without failing the build |
+| `SourceInvariantsTest` | 13 | the code-level fences listed in §1 - the sign-in support cannot introduce a Custom Tab, an `ACTION_VIEW`, a chooser or an extra activity without failing the build |
 
-Two implementation bugs were found while writing those tests, plus one test-thread mistake found by
-the first CI run, and all three were fixed:
+Two implementation bugs were found while writing those tests, plus one test-thread mistake found by the
+first CI run; all three were fixed. The user-visible sign-in failure described in §2b was found
+afterwards, on real hardware, and is fixed in the same change - with the device probe now asserting the
+invariant that would have caught it:
 
 * **The sign-in window could never close itself.** Chromium delivers `window.close()` only to a
   `WebChromeClient`; the pop-up WebView had none, so Google's returning page could not end the hand-off
@@ -91,6 +97,42 @@ the first CI run, and all three were fixed:
   window) and destroys the WebView on the main looper afterwards (destroying a WebView inside its own
   navigation callback is not safe). `finishedWindowsDoNotPileUpAgainstTheOpenWindowLimit` fails if this
   regresses.
+
+## 2b. The failure a user hit, and what actually caused it
+
+The first build handed to a user could open the sign-in screens but **could not submit an email** in
+either the "Continue with Google" form or Arena.ai's own email form; the email prompt sat superimposed
+over the typed address. Three separate policy gaps produced exactly that, and all three were silent -
+the app looked fine, the URL bar was fine, and the synthetic suite (1930 tests, green) could not see any
+of them, because it never loaded a real third-party page:
+
+1. **Google's sign-in JavaScript was refused.** The page renders its controls from static HTML and then
+   loads its entire UI bundle from a content-hashed path under `www.gstatic.com/_/mss/boq-identity/...`.
+   The allow-list pinned `www.gstatic.com` to `/accounts/`, `/gsi/`, `/recaptcha/`, so every one of
+   those scripts was refused: the page never became interactive, which is why its form could not submit
+   and why a pre-JS "Loading" layer stayed on top of the typed address.
+2. **CAPTCHA widget frames were refused.** An iframe was evaluated as if it were the app's own page, and
+   asset-only hosts are refused as pages - so `www.google.com/recaptcha/enterprise/anchor` (the widget
+   the site really uses, visible in the device log) never rendered. A form that needs a CAPTCHA token
+   from that widget cannot be submitted at all.
+3. **Cloudflare's challenge frame was refused.** Turnstile renders inside
+   `challenges.cloudflare.com/cdn-cgi/challenge-platform/...`, and only `/turnstile/` was pinned.
+
+The fixes, in the order they matter:
+
+* **A new traffic class, `SUBDOCUMENT`.** An iframe is judged as an *embedded* document instead of as the
+  app's page: same exact-host and path rules, but an asset-only host may be embedded. The app itself can
+  still never be navigated to a widget host - that is asserted both in the case table and on a device.
+* **Enumerating Google's asset paths was the wrong idea.** `ssl.gstatic.com` and `www.gstatic.com` are now
+  asset-only hosts *without* path restrictions, with the reason written down in `ArenaAllowlist` and the
+  exception pinned by `AllowlistRegressionTest` (adding another such host is a deliberate, reviewable
+  edit). `apis.google.com` gained `/_/`; Turnstile gained `/cdn-cgi/challenge-platform/`.
+* **Refusals are no longer invisible.** `ArenaWebViewClient` logs one line per distinct refused
+  destination - reason, host, path (never the query string) - so the next report of "the button does
+  nothing" can be matched against the allow-list directly.
+* **The device probe now asserts the invariant**: while the real sign-in page and the site's CAPTCHAs
+  load, no host on the third-party allow-list may be recorded as refused. That is the check that turns
+  this whole class of failure into a red build.
 
 ## 3. The live site, Google and the CAPTCHA, on a device (measured)
 
@@ -115,6 +157,9 @@ Read literally, on that emulator:
   `window.grecaptcha` was present in the page, i.e. the widget script **loaded through the policy** rather
   than being refused. The Cloudflare insights beacon next to it was still refused, which is the policy
   behaving as designed;
+* the `text=Loading ...` at the front of that string is the failure described in §2b in its raw form: the
+  page's own scripts had been refused, so the controls it had already rendered could never become
+  interactive - which is exactly what "the form does not submit" looked like from the outside;
 * Google served its **real sign-in page** to this WebView (`title=Sign in - Google Accounts`, the
   "Email or phone" identifier field present, no "this browser or app may not be secure" page).
 
@@ -149,7 +194,7 @@ Stated plainly, because a wrapper's weaknesses matter more than its claims:
 ## 5. Reproduce
 
 ```bash
-./gradlew :app:testDebugUnitTest          # 1930 tests, seconds
+./gradlew :app:testDebugUnitTest          # 2225 tests, seconds
 ./gradlew :app:assembleDebug :app:assembleRelease
 ./gradlew :app:connectedDebugAndroidTest  # 46 tests, needs an emulator/device
 ```

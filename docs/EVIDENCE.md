@@ -30,23 +30,23 @@ understands `@Test` and `@RunWith(Parameterized.class)`):
 ```
 $ javac -encoding UTF-8 -d /tmp/out <policy sources> <jvm test sources>     # clean, no warnings shown
 $ java -cp /tmp/out TestRunner --scan app/src/test/java app/src/test/java
-Tests run: 1930, Failures: 0, Ignored: 0, Test classes: 8 (165 ms)
+Tests run: 2225, Failures: 0, Ignored: 0, Test classes: 8 (216 ms)
 ```
 
 Per class, from the same run:
 
 ```
-1883  app.arenawebview.locked.policy.UrlPolicyTest
+2176  app.arenawebview.locked.policy.UrlPolicyTest
   11  app.arenawebview.locked.policy.AllowlistRegressionTest
    5  app.arenawebview.locked.policy.BackNavigatorTest
    6  app.arenawebview.locked.policy.PolicyMetricsTest
    4  app.arenawebview.locked.policy.PolicyPurityTest
    5  app.arenawebview.locked.ManifestPolicyTest
-  11  app.arenawebview.locked.SourceInvariantsTest
+  13  app.arenawebview.locked.SourceInvariantsTest
    5  app.arenawebview.locked.ResourcePolicyTest
 ```
 
-`UrlPolicyTest`'s 1883 comes from 269 cases x 7 assertions; the 269 are 229 base cases plus 40 cases that
+`UrlPolicyTest`'s 2176 comes from 272 cases x 8 assertions; the 272 are 229 base cases plus 43 cases that
 describe the sign-in/CAPTCHA configuration (`PolicyCases.all()` and
 `PolicyCases.withGoogleSignInAndCaptchaEnabled()`).
 
@@ -259,7 +259,7 @@ Everything in this section is filled in from the GitHub Actions run that builds 
 same verbatim style as above. Until the run exists, the entries below say PENDING; nothing here is a
 prediction.
 
-## 4. Job `unit-tests` (1.1.0) - passed
+## 4. Job `unit-tests` (1.1.0, commit `cb94dee`) - passed
 
 ```
 > Task :app:compileDebugUnitTestJavaWithJavac
@@ -269,15 +269,20 @@ BUILD SUCCESSFUL
 1930 tests completed, 0 failed
 ```
 
-The same job failed on the first attempt with the `aapt2` resource error quoted in §0; the fix is in the
-commit that re-ran it.
+That run's suite was the 1930-test one; the allow-list fix described in §7 added the cases that would
+have caught the field failure, so the current suite is 2225 tests (see §0). The same job failed on the
+first attempt of this change with the `aapt2` resource error quoted in §0.
+
+## 4b. Job `unit-tests` (current commit) - PENDING
+
+Filled in from the run that builds the APK published with this release, in the same verbatim style.
 
 ## 5. Job `build-apk` (1.1.0) - passed
 
 Badging and checksums are printed by the run that produces the 1.1.0 APK; the section below is filled in
 from the run that publishes it.
 
-## 6. Job `instrumented-tests` (1.1.0) - 45/46, one test-thread bug (fixed)
+## 6. Job `instrumented-tests` (1.1.0, commit `cb94dee`) - 46 tests, one test-thread bug (fixed)
 
 ```
 > Task :app:connectedDebugAndroidTest
@@ -331,3 +336,28 @@ D ArenaWebViewLocked: console: Access to script at 'https://static.cloudflareins
    from origin 'https://arena.ai' has been blocked by CORS policy
 I ArenaWebViewLocked: load (test:google-signin): accounts.google.com
 ```
+
+## 7. The field failure: what the device log was missing, and what it says now
+
+The log in §6 was green apart from one test bug, and the build still could not sign in. The two probes it
+contained said exactly the right things (the CAPTCHA is Google reCAPTCHA Enterprise on the allowed hosts;
+Google served the real identifier page) - but the *reason the page could not become interactive* was
+invisible, because a refused sub-resource no longer appeared anywhere. `ArenaWebViewClient` now logs one
+line per distinct refused destination:
+
+```
+I ArenaWebViewLocked: refused sub-resource: PATH_NOT_ALLOWED host=www.gstatic.com path=/recaptcha/releases/x/r.js
+I ArenaWebViewLocked: refused document: DOCUMENT_NOT_ALLOWED host=www.google.com path=/recaptcha/enterprise/anchor
+```
+
+and the device probe asserts the stronger, checkable statement: while the real sign-in page and the
+site's CAPTCHA load, **no host on the third-party allow-list may be recorded as refused**. That is the
+regression guard for this failure, and it fails in CI rather than in someone's hands.
+
+The three gaps it protects against, each of which alone was enough to make a form dead:
+
+| Gap (before) | Effect | Now |
+| --- | --- | --- |
+| `www.gstatic.com` pinned to `/accounts/`, `/gsi/`, `/recaptcha/` | Google's identity UI bundle lives under `/_/mss/boq-identity/_/js/...` - the page rendered its static markup and never became interactive (the "Loading" layer the user saw over the typed address) | `ssl.gstatic.com` and `www.gstatic.com` are asset-only hosts **without** path restrictions, a reviewed exception pinned by `AllowlistRegressionTest` |
+| An iframe was evaluated as the app's own page | Asset-only hosts are refused as pages, so `www.google.com/recaptcha/enterprise/anchor` never rendered - and a form that needs the widget's token can never be submitted | New `TrafficClass.SUBDOCUMENT`: an embedded document is judged with the same host/path rules but may be an asset host; the app itself is still refused |
+| `challenges.cloudflare.com` pinned to `/turnstile/` only | Turnstile renders inside `/cdn-cgi/challenge-platform/...`, so its frame was refused | Both prefixes are allowed, and neither host can ever be the page |
