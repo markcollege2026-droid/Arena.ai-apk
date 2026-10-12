@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HTTPS only, everywhere.
+
+  * cleartextTrafficPermitted="false" in the base config refuses plain HTTP for every connection in
+    the app (this mirrors the runtime policy, which also refuses http:// URLs).
+  * trust-anchors = system only: no user-added CAs, so an installed "debug" proxy certificate cannot
+    be used to intercept the app's traffic.
+  * No <debug-overrides> block exists in this file, so debug builds are just as strict as release.
+  * The <domain-config> entries mirror the hosts this build may display as pages: Arena.ai's own hosts
+    plus accounts.google.com, which the "Continue with Google" sign-in hand-off needs. Asset-only hosts
+    (CAPTCHA widgets, Google's static assets) are covered by the base config - they get no special
+    treatment and no looser rules.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">arena.ai</domain>
+        <domain includeSubdomains="false">www.arena.ai</domain>
+        <domain includeSubdomains="false">auth.arena.ai</domain>
+        <domain includeSubdomains="false">cdn.arena.ai</domain>
+        <domain includeSubdomains="false">agent.arena.ai</domain>
+        <domain includeSubdomains="false">code.arena.ai</domain>
+        <domain includeSubdomains="false">indexable.arena.ai</domain>
+        <domain includeSubdomains="false">blog.arena.ai</domain>
+        <domain includeSubdomains="false">news.arena.ai</domain>
+        <domain includeSubdomains="false">help.arena.ai</domain>
+        <domain includeSubdomains="false">status.arena.ai</domain>
+        <domain includeSubdomains="false">trust.arena.ai</domain>
+        <domain includeSubdomains="false">accounts.google.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

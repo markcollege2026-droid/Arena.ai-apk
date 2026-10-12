@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fallback launcher icon for API 24/25 (adaptive icons arrived in API 26). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF0B1020"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M28,88 L54,22 L80,88" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF4C8DFF"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:pathData="M40,64 L68,64" />
+</vector>
