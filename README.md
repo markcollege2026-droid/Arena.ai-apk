@@ -53,7 +53,7 @@ sideloading and for CI verification, and it is not a production signing key.** S
 
 | Job | What it does |
 | --- | --- |
-| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (1925 tests) |
+| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (1930 tests) |
 | `build-apk` | Builds debug + release APKs, runs `aapt2 dump badging` assertions, writes `APK-SHA256SUMS.txt` |
 | `instrumented-tests` | Boots an API 34 emulator and runs `connectedDebugAndroidTest` (the live-site smoke test is skipped if the runner has no network path to arena.ai) |
 | `release` | On a `v*` tag: publishes a GitHub Release with both APKs, checksums, badging output and release notes |
@@ -89,7 +89,8 @@ configuration that could be swapped out at runtime.
 | 18 | Android Safe Browsing is on | `setSafeBrowsingEnabled(true)`; a hit is treated as a blocked navigation |
 | 19 | Back stays inside the app | Back closes the sign-in window first, then handles the app's own fullscreen video and overlay, then walks WebView history **only to entries that still pass policy**; leaving the app requires a double press |
 | 20 | The app cannot be steered from outside | One exported launcher activity, no deep links, no services/receivers/providers |
-| 21 | Runtime re-verification | A 1-second watchdog re-checks `WebView.getUrl()` and rewinds to the start page if it is ever off-policy; a lost renderer process tears the WebView down |
+| 21 | Resource files cannot break the build quietly | A JVM test parses every XML file under `res/` and applies the two rules `aapt2` enforces - no unescaped apostrophe/quote in a string resource, no duplicate resource name - and asserts that every page-capable host is pinned in `network_security_config.xml` |
+| 22 | Runtime re-verification | A 1-second watchdog re-checks `WebView.getUrl()` and rewinds to the start page if it is ever off-policy; a lost renderer process tears the WebView down |
 
 Failures are fail-closed: a URL that cannot be parsed, a null/empty URL, or a policy error results in
 a refusal plus an in-app explanation, never in a load.

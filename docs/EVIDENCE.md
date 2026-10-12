@@ -30,7 +30,7 @@ understands `@Test` and `@RunWith(Parameterized.class)`):
 ```
 $ javac -encoding UTF-8 -d /tmp/out <policy sources> <jvm test sources>     # clean, no warnings shown
 $ java -cp /tmp/out TestRunner --scan app/src/test/java app/src/test/java
-Tests run: 1925, Failures: 0, Ignored: 0, Test classes: 7 (173 ms)
+Tests run: 1930, Failures: 0, Ignored: 0, Test classes: 8 (165 ms)
 ```
 
 Per class, from the same run:
@@ -43,11 +43,29 @@ Per class, from the same run:
    4  app.arenawebview.locked.policy.PolicyPurityTest
    5  app.arenawebview.locked.ManifestPolicyTest
   11  app.arenawebview.locked.SourceInvariantsTest
+   5  app.arenawebview.locked.ResourcePolicyTest
 ```
 
 `UrlPolicyTest`'s 1883 comes from 269 cases x 7 assertions; the 269 are 229 base cases plus 40 cases that
 describe the sign-in/CAPTCHA configuration (`PolicyCases.all()` and
 `PolicyCases.withGoogleSignInAndCaptchaEnabled()`).
+
+The first CI attempt at this change failed, and the reason is worth keeping. `aapt2` refused the values
+resource:
+
+```
+Caused by: com.android.aaptcompiler.ResourceCompilationException: Resource compilation failed
+  (Failed to compile values resource file .../merged.dir/values/values.xml. Cause:
+   java.lang.IllegalStateException: Can not extract resource from com.android.aaptcompiler.ParsedResource@5cb9dfdd.)
+Caused by: java.lang.IllegalStateException: Can not extract resource from com.android.aaptcompiler.ParsedResource@5cb9dfdd.
+BUILD FAILED in 32s
+```
+
+The offender was the new sign-in copy in `res/values/strings.xml`, which contained `Google's` - an
+unescaped apostrophe is valid XML but is rejected by the Android resource compiler. The JVM suite could
+not see it, because resource compilation happens inside the Android build. The copy now avoids the
+apostrophe, and `ResourcePolicyTest` applies that rule on the JVM (plus duplicate resource names and the
+network-config wiring) so the next occurrence is caught in a second rather than in a run.
 
 The first local run was **not** clean, and the failure is the reason this section exists:
 

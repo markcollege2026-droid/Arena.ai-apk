@@ -7,7 +7,7 @@ the end of this file.
 
 | Suite | Where | Result |
 | --- | --- | --- |
-| Security core (URL policy, allow-list, back navigation, manifest, source invariants) | JVM, JDK 17 - **run locally while preparing this release** (see §1) | **1925 tests, 0 failures** |
+| Security core (URL policy, allow-list, back navigation, manifest, source invariants) | JVM, JDK 17 - **run locally while preparing this release** (see §1) | **1930 tests, 0 failures** |
 | Same suite, authoritative build | JVM, GitHub runner, JDK 17 (`unit-tests` job) | PENDING - CI run for 1.1.0 |
 | APK build + artifact inspection | `aapt2 dump badging` on the shipped release APK | PENDING - CI run for 1.1.0 |
 | Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` (46 tests) | PENDING - CI run for 1.1.0 |
@@ -15,12 +15,13 @@ the end of this file.
 Nothing in this file is a prediction: rows marked PENDING are filled in from the run that produces the
 APK, and a claim that is not backed by a run is written as unverified.
 
-## 1. JVM suite - 1925 tests, 0 failures
+## 1. JVM suite - 1930 tests, 0 failures
 
 `./gradlew :app:testDebugUnitTest` (the CI job) - and, while preparing this release, the same sources
-compiled and executed locally with `javac 1.8.0_152` and a small JUnit-compatible runner, because this
+compiled and executed locally with `javac 1.8.0_152` plus a small JUnit-compatible runner, because this
 sandbox has no Android SDK. That local run is a *stronger* check than a brace-count, but it is not the
-authoritative one: the CI run is, and it uses the project's real JDK 17/Gradle toolchain.
+authoritative one: the CI run is, it uses the project's real JDK 17/Gradle toolchain, and it is the one
+that caught the resource bug described below.
 
 | Class | Tests | What it pins |
 | --- | --- | --- |
@@ -30,6 +31,7 @@ authoritative one: the CI run is, and it uses the project's real JDK 17/Gradle t
 | `PolicyMetricsTest` | 6 | counters, bounded 50-entry block log, newest-first ordering, URL truncation, query/fragment stripping, reset |
 | `PolicyPurityTest` | 4 | no Android imports in `policy/`, no `java.net.URI`/`URL` parsing (parser differential = classic bypass), no logging or file access in the security core |
 | `ManifestPolicyTest` | 5 | one exported activity, two permissions, not debuggable, no backup, cleartext off, system-only trust anchors, and the network security config's pinned host set is a **subset of the runtime allow-list** |
+| `ResourcePolicyTest` | 5 | every XML file under `res/` parses; no string resource carries an unescaped `'` or `"` (the rule `aapt2` enforces); ids are unique and the ones the code uses are declared; every **page-capable** host is pinned in `network_security_config.xml` while asset-only hosts deliberately are not |
 | `SourceInvariantsTest` | 11 | comment-stripped source scan: no JavaScript bridge; TLS errors never proceeded; exactly one URL-loading call site; no `startActivity*` delegation; hardened settings present/unsafe ones absent; **the sign-in window is a view, not an activity**; **no `ACTION_VIEW`, no `androidx.browser`, no `createChooser`**; the hidden pop-up window is never attached to a view hierarchy by the pop-up plumbing |
 
 Three things the new coverage is built to catch:
@@ -44,7 +46,17 @@ Three things the new coverage is built to catch:
    and refused as a *document* (`DOCUMENT_NOT_ALLOWED`), which is what stops the sign-in mechanism from
    being usable as a general-purpose window.
 
-One real failure was found by the local run and fixed before this build: the rewritten
+Two real failures were found and fixed before this build. The first came out of the CI run for this
+change, which is the honest reason the local run is not the authority:
+
+* **CI: `aapt2` refused `res/values/strings.xml`.** The new sign-in copy contained `Google's` with an
+  unescaped apostrophe, which the Android resource compiler rejects
+  (`ResourceCompilationException: Can not extract resource from ... ParsedResource`) - a resource rule the
+  JVM suite could not see because resource compilation happens inside the Android build. The copy now
+  avoids the apostrophe, and `ResourcePolicyTest` (5 tests) applies that rule, plus the duplicate-name
+  rule and the network-config wiring, on the JVM in a second. It cannot run *before* `aapt2` in CI - a
+  broken resource fails that build first - but it means the mistake is caught locally next time.
+* **Local: the rewritten `AllowlistRegressionTest` assertion.** the rewritten
 `AllowlistRegressionTest` asserted that `ArenaAllowlist.allowedHosts()` equals the first-party list,
 which is wrong once capability groups are enabled - `allowedHosts()` is the *whole* enforced set. It now
 asserts `firstPartyHosts + thirdPartyHosts == allowedHosts()`, with no duplicates, which is a stronger
@@ -110,7 +122,7 @@ Stated plainly, because a wrapper's weaknesses matter more than its claims:
 ## 5. Reproduce
 
 ```bash
-./gradlew :app:testDebugUnitTest          # 1925 tests, seconds
+./gradlew :app:testDebugUnitTest          # 1930 tests, seconds
 ./gradlew :app:assembleDebug :app:assembleRelease
 ./gradlew :app:connectedDebugAndroidTest  # 46 tests, needs an emulator/device
 ```

@@ -31,6 +31,10 @@ as the flows tolerate, and without the wrapper ever touching a credential or a c
   the window would have lingered; and every hidden pop-up leaked, because the teardown was posted
   through `WebView.post()` on a view that is never attached, so after three pop-ups the app would have
   refused all further `window.open()` calls. Details in TEST_REPORT.md §2.
+* **A third bug, found by CI:** the new sign-in copy contained an unescaped apostrophe in a string
+  resource, which `aapt2` rejects - a resource rule the JVM suite could not see. Fixed, and
+  `ResourcePolicyTest` now applies that rule (plus duplicate resource names and the network-config
+  wiring) on the JVM.
 * Version bumped to `versionCode 2` / `versionName 1.1.0`; `accounts.google.com` added to the pinned
   `network_security_config.xml` host list (which the unit suite asserts is a subset of the runtime
   allow-list).
@@ -59,7 +63,7 @@ and nothing in the app touches Arena.ai authentication, CAPTCHA or access rules.
 
 ## Verified for this release
 
-* **1925 JVM tests, 0 failures** against a real `javac` and JVM while preparing the change (269-case URL
+* **1930 JVM tests, 0 failures** against a real `javac` and JVM while preparing the change (269-case URL
   table x 7 assertions, allow-list regression over the whole enforced set, back navigation, metrics,
   policy purity, manifest + network security config, source invariants). The GitHub Actions run re-runs
   the same suite with the project's JDK 17/Gradle toolchain and is the authoritative result.
