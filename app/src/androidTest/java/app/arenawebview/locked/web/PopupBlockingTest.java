@@ -117,7 +117,10 @@ public class PopupBlockingTest {
                 WebView primary = new WebView(context);
                 ArenaWebChromeClient chrome = new ArenaWebChromeClient(context, host);
 
-                Message message = Message.obtain();
+                // Chromium always hands over a Message that has a target handler; a bare
+                // Message.obtain() would make sendToTarget() throw, so mirror the real shape.
+                Message message = new android.os.Handler(android.os.Looper.getMainLooper())
+                        .obtainMessage();
                 WebView.WebViewTransport transport;
                 try {
                     // WebViewTransport is a public type but not a public constructor; reflection keeps

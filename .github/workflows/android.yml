@@ -205,6 +205,10 @@ jobs:
             adb exec-out screencap -p > docs/evidence/app-screenshot.png || true
             adb shell dumpsys activity activities > docs/evidence/device-activities.txt || true
             ls -la docs/evidence || true
+            # Print the guard diagnostics into the workflow log as well, so the evidence is readable
+            # without downloading the artifact.
+            echo "=== guard diagnostics from the device ==="
+            tail -n 60 docs/evidence/device-logcat.txt || true
             test ! -f /tmp/instrumented-failed
 
       - name: Publish instrumented test evidence

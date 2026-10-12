@@ -95,8 +95,18 @@ public class ArenaWebChromeClient extends WebChromeClient {
         }));
         transport.setWebView(popup);
         // Handing the hidden WebView over lets Chromium tell us which URL the new window wanted; it is
-        // never attached to any view hierarchy, so it can never be seen.
-        resultMsg.sendToTarget();
+        // never attached to any view hierarchy, so it can never be seen. A Message without a target
+        // handler cannot be answered, which is Chromium's problem to survive, not a reason to crash.
+        try {
+            resultMsg.sendToTarget();
+        } catch (RuntimeException e) {
+            metrics.increment(PolicyMetrics.Counter.BLOCKED_POPUPS);
+            metrics.recordBlock(app.arenawebview.locked.policy.BlockReason.CAPABILITY_DISABLED,
+                    "", "window.open without a usable transport message");
+            host.onPopupBlocked("unusable-transport", null);
+            onCloseWindow(popup);
+            return false;
+        }
         return true;
     }
 
