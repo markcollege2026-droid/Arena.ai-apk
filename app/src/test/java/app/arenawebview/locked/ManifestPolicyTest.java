@@ -38,6 +38,15 @@ public class ManifestPolicyTest {
         return element.getAttributeNS(ANDROID_NS, name);
     }
 
+    /**
+     * Network security config files use unprefixed attributes ({@code cleartextTrafficPermitted},
+     * {@code src}, {@code includeSubdomains}) - unlike the manifest, where every attribute relevant to
+     * the platform lives in the {@code android:} namespace.
+     */
+    private static String configAttr(Element element, String name) {
+        return element.getAttribute(name);
+    }
+
     private static List<Element> children(Element parent, String tag) {
         List<Element> result = new ArrayList<Element>();
         NodeList nodes = parent.getChildNodes();
@@ -133,7 +142,7 @@ public class ManifestPolicyTest {
         assertEquals(1, baseConfigs.size());
         Element base = baseConfigs.get(0);
         assertEquals("cleartext must be refused by default",
-                "false", androidAttr(base, "cleartextTrafficPermitted"));
+                "false", configAttr(base, "cleartextTrafficPermitted"));
 
         List<Element> debugOverrides = children(root, "debug-overrides");
         assertTrue("debug builds must be as strict as release builds", debugOverrides.isEmpty());
@@ -142,17 +151,17 @@ public class ManifestPolicyTest {
         assertEquals(1, anchors.size());
         List<Element> certificates = children(anchors.get(0), "certificates");
         assertEquals("only the system trust store may be used", 1, certificates.size());
-        assertEquals("system", androidAttr(certificates.get(0), "src"));
+        assertEquals("system", configAttr(certificates.get(0), "src"));
 
         List<Element> domainConfigs = children(root, "domain-config");
         assertFalse("the allowed hosts should be listed explicitly", domainConfigs.isEmpty());
         for (Element domainConfig : domainConfigs) {
-            assertEquals("false", androidAttr(domainConfig, "cleartextTrafficPermitted"));
+            assertEquals("false", configAttr(domainConfig, "cleartextTrafficPermitted"));
             List<Element> domains = children(domainConfig, "domain");
             assertFalse(domains.isEmpty());
             for (Element domain : domains) {
                 assertEquals("sub-domains must not be implied, every host is listed",
-                        "false", androidAttr(domain, "includeSubdomains"));
+                        "false", configAttr(domain, "includeSubdomains"));
             }
         }
     }

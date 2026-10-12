@@ -34,9 +34,56 @@ public class SourceInvariantsTest {
                 collect(file, sb);
             } else if (file.getName().endsWith(".java")) {
                 sb.append("// FILE: ").append(file.getName()).append('\n');
-                sb.append(TestPaths.read(file)).append('\n');
+                sb.append(stripComments(TestPaths.read(file))).append('\n');
             }
         }
+    }
+
+    /** Reads one main-source file with comments removed - the invariants are about code, not prose. */
+    private static String code(String relativePath) throws Exception {
+        return stripComments(TestPaths.readSource(relativePath));
+    }
+
+    /**
+     * Removes {@code //} and {@code /* *}{@code /} comments while leaving string and character
+     * literals untouched, so that a URL such as {@code "https://arena.ai/"} survives intact.
+     */
+    private static String stripComments(String source) {
+        StringBuilder out = new StringBuilder(source.length());
+        int i = 0;
+        int n = source.length();
+        while (i < n) {
+            char c = source.charAt(i);
+            if (c == '"' || c == '\'') {
+                out.append(c);
+                i++;
+                while (i < n) {
+                    char inLiteral = source.charAt(i);
+                    out.append(inLiteral);
+                    i++;
+                    if (inLiteral == '\\' && i < n) {
+                        out.append(source.charAt(i));
+                        i++;
+                    } else if (inLiteral == c) {
+                        break;
+                    }
+                }
+            } else if (c == '/' && i + 1 < n && source.charAt(i + 1) == '/') {
+                while (i < n && source.charAt(i) != '\n') {
+                    i++;
+                }
+            } else if (c == '/' && i + 1 < n && source.charAt(i + 1) == '*') {
+                i += 2;
+                while (i + 1 < n && !(source.charAt(i) == '*' && source.charAt(i + 1) == '/')) {
+                    i++;
+                }
+                i += 2;
+            } else {
+                out.append(c);
+                i++;
+            }
+        }
+        return out.toString();
     }
 
     private static int count(String haystack, String needle) {
@@ -60,7 +107,7 @@ public class SourceInvariantsTest {
 
     @Test
     public void tlsErrorsAreNeverBypassed() throws Exception {
-        String client = TestPaths.readSource("app/arenawebview/locked/web/ArenaWebViewClient.java");
+        String client = code("app/arenawebview/locked/web/ArenaWebViewClient.java");
         assertTrue("the client must handle TLS errors", client.contains("onReceivedSslError"));
         assertFalse("proceed() must never be called", client.contains("proceed()"));
         assertTrue("the handler must be cancelled", client.contains("handler.cancel()"));
@@ -71,7 +118,7 @@ public class SourceInvariantsTest {
         String sources = allMainSources();
         assertEquals("every load must go through loadVerifiedDestination",
                 1, count(sources, ".loadUrl("));
-        String main = TestPaths.readSource("app/arenawebview/locked/MainActivity.java");
+        String main = code("app/arenawebview/locked/MainActivity.java");
         assertTrue(main.contains("public void loadVerifiedDestination(String url, String source)"));
     }
 
@@ -83,7 +130,7 @@ public class SourceInvariantsTest {
         assertFalse("no call sites may start an activity",
                 sources.contains(".startActivity(") || sources.contains(".startActivityForResult("));
 
-        String main = TestPaths.readSource("app/arenawebview/locked/MainActivity.java");
+        String main = code("app/arenawebview/locked/MainActivity.java");
         assertTrue(main.contains("public void startActivity(Intent intent)"));
         assertTrue(main.contains("public void startActivityForResult(Intent intent, int requestCode)"));
         assertTrue(main.contains("blockExternalIntent"));
@@ -91,7 +138,7 @@ public class SourceInvariantsTest {
 
     @Test
     public void webViewIsConfiguredStrictly() throws Exception {
-        String hardening = TestPaths.readSource("app/arenawebview/locked/web/WebViewHardening.java");
+        String hardening = code("app/arenawebview/locked/web/WebViewHardening.java");
         assertTrue(hardening.contains("setAllowFileAccess(false)"));
         assertTrue(hardening.contains("setAllowContentAccess(false)"));
         assertTrue(hardening.contains("setAllowFileAccessFromFileURLs(false)"));
@@ -116,14 +163,14 @@ public class SourceInvariantsTest {
 
     @Test
     public void webDebuggingOnlyExistsInDebugBuilds() throws Exception {
-        String main = TestPaths.readSource("app/arenawebview/locked/MainActivity.java");
+        String main = code("app/arenawebview/locked/MainActivity.java");
         assertTrue(main.contains("WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)"));
         assertFalse(main.contains("setWebContentsDebuggingEnabled(true)"));
     }
 
     @Test
     public void chromeClientRefusesEscapes() throws Exception {
-        String chrome = TestPaths.readSource("app/arenawebview/locked/web/ArenaWebChromeClient.java");
+        String chrome = code("app/arenawebview/locked/web/ArenaWebChromeClient.java");
         assertTrue("the file picker must be intercepted", chrome.contains("onShowFileChooser"));
         assertTrue("the file picker callback must be completed without a file",
                 chrome.contains("filePathCallback.onReceiveValue(null)"));
@@ -134,7 +181,7 @@ public class SourceInvariantsTest {
 
     @Test
     public void downloadsAreRefused() throws Exception {
-        String hardening = TestPaths.readSource("app/arenawebview/locked/web/WebViewHardening.java");
+        String hardening = code("app/arenawebview/locked/web/WebViewHardening.java");
         assertTrue(hardening.contains("setDownloadListener"));
         assertFalse("the app must not use the platform download manager",
                 allMainSources().contains("DownloadManager"));
@@ -143,9 +190,9 @@ public class SourceInvariantsTest {
 
     @Test
     public void theVisibleWebViewIsOnlyEverTheOnePrimaryWebView() throws Exception {
-        String main = TestPaths.readSource("app/arenawebview/locked/MainActivity.java");
-        String hardening = TestPaths.readSource("app/arenawebview/locked/web/WebViewHardening.java");
-        String chrome = TestPaths.readSource("app/arenawebview/locked/web/ArenaWebChromeClient.java");
+        String main = code("app/arenawebview/locked/MainActivity.java");
+        String hardening = code("app/arenawebview/locked/web/WebViewHardening.java");
+        String chrome = code("app/arenawebview/locked/web/ArenaWebChromeClient.java");
 
         assertFalse("the activity must not create WebViews itself", main.contains("new WebView("));
         assertTrue(main.contains("createPrimaryWebView"));
@@ -158,7 +205,7 @@ public class SourceInvariantsTest {
 
     @Test
     public void incomingIntentsAreIgnored() throws Exception {
-        String main = TestPaths.readSource("app/arenawebview/locked/MainActivity.java");
+        String main = code("app/arenawebview/locked/MainActivity.java");
         assertTrue(main.contains("recordIncomingIntent"));
         assertFalse("the activity must not read URL data out of an intent",
                 main.contains("getIntent().getData()"));
