@@ -62,6 +62,31 @@ public interface GuardHost {
     /** A popup window was torn down. */
     void onPopupClosed(WebView popup);
 
+    /**
+     * A pop-up turned out to be a sign-in hand-off (Google's account host) and must be shown as a real
+     * window <em>inside this app</em>, still driven by Chromium.
+     *
+     * <p>This exists because the OAuth pop-up flow is not a navigation: the sign-in page hands the result
+     * back to the page that opened it through {@code window.opener}/postMessage. Re-loading the URL in
+     * the main WebView - which is what happens to every other pop-up - would break that contract, so the
+     * window is shown instead. It is <b>never</b> handed to a system browser and it is policed by exactly
+     * the same policy as the main view: it may only display sign-in hosts and Arena.ai pages.</p>
+     *
+     * @param popup the WebView Chromium created for the window; the host must attach it and must destroy
+     *              it when the window closes
+     * @param url   the verified sign-in URL that window is about to load
+     */
+    void onSignInWindowRequested(WebView popup, String url);
+
+    /** A sign-in window closed (either {@code window.close()} by the page or the user closing it). */
+    void onSignInWindowClosed(String reason);
+
+    /**
+     * A sign-in window navigated to another allowed URL of the hand-off. Informational: it exists so the
+     * steps of a sign-in are visible in the log when someone debugs a login that does not complete.
+     */
+    void onSignInWindowNavigated(String url);
+
     /** A download was refused (nothing is ever handed to a download manager or browser). */
     void onDownloadBlocked(String url, String mimeType);
 

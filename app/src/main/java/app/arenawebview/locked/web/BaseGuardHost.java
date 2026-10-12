@@ -66,6 +66,21 @@ public abstract class BaseGuardHost implements GuardHost {
     }
 
     @Override
+    public void onSignInWindowRequested(WebView popup, String url) {
+        // no-op: a test double that does not care about sign-in windows
+    }
+
+    @Override
+    public void onSignInWindowClosed(String reason) {
+        // no-op
+    }
+
+    @Override
+    public void onSignInWindowNavigated(String url) {
+        // no-op
+    }
+
+    @Override
     public void onPopupClosed(WebView popup) {
         // nothing to do
     }

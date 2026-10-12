@@ -26,6 +26,9 @@ public final class RecordingGuardHost extends BaseGuardHost {
     public String lastBlockedPageLoad;
     public String lastPopupRouted;
     public String lastPopupBlocked;
+    public String lastSignInWindowUrl;
+    public String lastSignInWindowClosedReason;
+    public String lastSignInWindowNavigated;
     public String lastDownloadBlocked;
     public String lastError;
     public String lastRecoveryReason;
@@ -122,6 +125,24 @@ public final class RecordingGuardHost extends BaseGuardHost {
     }
 
     /** True when the guard clients reported a hidden pop-up WebView (which must never be attached). */
+    @Override
+    public void onSignInWindowRequested(WebView popup, String url) {
+        lastSignInWindowUrl = url;
+        events.add("signInWindow:" + url);
+    }
+
+    @Override
+    public void onSignInWindowClosed(String reason) {
+        lastSignInWindowClosedReason = reason;
+        events.add("signInWindowClosed:" + reason);
+    }
+
+    @Override
+    public void onSignInWindowNavigated(String url) {
+        lastSignInWindowNavigated = url;
+        events.add("signInWindowNavigated:" + url);
+    }
+
     @Override
     public void onPopupClosed(WebView popup) {
         event("popup closed");

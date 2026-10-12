@@ -19,6 +19,9 @@ import java.util.List;
  * <p>Every row is a claim about behaviour, so this test is the evidence for statements like "redirects
  * to a third party are refused" or "a Cyrillic 'а' look-alike is refused": if the implementation and the
  * table ever disagree, the build fails.</p>
+ *
+ * <p>The table covered by the shipping policy is {@link PolicyCases#all()} plus - because this build
+ * enables them - {@link PolicyCases#withGoogleSignInAndCaptchaEnabled()}.</p>
  */
 @RunWith(Parameterized.class)
 public class UrlPolicyTest {
@@ -36,6 +39,13 @@ public class UrlPolicyTest {
         List<Object[]> rows = new ArrayList<Object[]>();
         for (PolicyCases.Case testCase : PolicyCases.all()) {
             rows.add(new Object[]{testCase});
+        }
+        if (ArenaAllowlist.ENABLE_GOOGLE_SIGN_IN || ArenaAllowlist.ENABLE_CAPTCHA_WIDGETS) {
+            // This build enables the Google sign-in and CAPTCHA hosts, so the rows that describe them -
+            // including everything that must stay refused next to them - are part of this run.
+            for (PolicyCases.Case testCase : PolicyCases.withGoogleSignInAndCaptchaEnabled()) {
+                rows.add(new Object[]{testCase});
+            }
         }
         return rows;
     }

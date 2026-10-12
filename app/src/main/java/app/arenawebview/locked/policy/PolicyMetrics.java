@@ -34,6 +34,8 @@ public final class PolicyMetrics {
         BLOCKED_POPUPS,
         /** {@code window.open}/{@code target=_blank} targets that were verified and re-routed into the single WebView. */
         ROUTED_POPUPS,
+        /** Sign-in windows opened inside the app for a verified sign-in page (never a system browser). */
+        SIGN_IN_WINDOWS,
         /** Download attempts refused (the app never hands a URL to a download manager or browser). */
         BLOCKED_DOWNLOADS,
         /** Attempts to start another Android app, refused in {@code Activity.startActivity(...)}. */

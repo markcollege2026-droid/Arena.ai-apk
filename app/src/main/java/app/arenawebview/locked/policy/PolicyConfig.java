@@ -8,10 +8,11 @@ import java.util.Locale;
 /**
  * The complete, immutable navigation policy of the wrapper.
  *
- * <p>Everything the WebView is allowed to touch is described here: one start URL, a list of
- * first-party hosts and (optionally, off by default) a small list of path-scoped third-party entries
- * that exist only because a specific site capability - e.g. Google's reCAPTCHA widget - cannot work
- * without them.</p>
+ * <p>Everything the WebView is allowed to touch is described here: one start URL, the first-party
+ * hosts, and the narrowly scoped third-party entries that exist only because a specific site
+ * capability cannot work without them - Google's sign-in pages, Google's sign-in assets and the
+ * CAPTCHA widget assets. Each entry carries a {@link AllowEntry.Role}, so callers can ask not only
+ * "is this allowed?" but "is this an Arena.ai page, or a step of a sign-in hand-off?".</p>
  *
  * <p>The policy has exactly one public decision method per traffic class:</p>
  * <ul>
@@ -66,6 +67,30 @@ public final class PolicyConfig {
     /** Evaluate a sub-resource request (script, image, XHR, websocket-less fetch, ...). */
     public PolicyResult evaluateRequest(String rawUrl) {
         return UrlPolicy.evaluate(rawUrl, this, UrlPolicy.TrafficClass.SUBRESOURCE);
+    }
+
+    /**
+     * True when the URL is a page of a sign-in hand-off (Google's account host) rather than an Arena.ai
+     * page. Used to decide whether a pop-up must become an in-app sign-in window: the OAuth flow needs a
+     * real window of its own, because the site's page talks to it through {@code window.opener}.
+     */
+    public boolean isSignInNavigation(String rawUrl) {
+        PolicyResult result = evaluateNavigation(rawUrl);
+        if (!result.isAllowed()) {
+            return false;
+        }
+        AllowEntry entry = result.matchedEntry();
+        return entry != null && entry.isSignIn();
+    }
+
+    /** True when the URL is a page of the product itself (any first-party Arena host). */
+    public boolean isProductNavigation(String rawUrl) {
+        PolicyResult result = evaluateNavigation(rawUrl);
+        if (!result.isAllowed()) {
+            return false;
+        }
+        AllowEntry entry = result.matchedEntry();
+        return entry != null && entry.isProduct();
     }
 
     /** Find the entry that matches a canonical host, or null. */

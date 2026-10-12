@@ -166,7 +166,13 @@ public class ManifestPolicyTest {
         }
     }
 
-    /** Every host in the manifest's network config must also be in the runtime allow-list. */
+    /**
+     * Every host in the manifest's network config must also be in the runtime allow-list.
+     *
+     * <p>The config is a belt-and-braces layer (the base config already refuses cleartext and user CAs
+     * everywhere), so it is allowed to be narrower than the policy - but it must never be <em>wider</em>,
+     * which would mean the OS trusts a host the app's own policy would refuse.</p>
+     */
     @Test
     public void networkSecurityConfigHostsAreAllAllowListed() throws Exception {
         Document config = parse(TestPaths.resource("xml/network_security_config.xml"));
@@ -178,7 +184,21 @@ public class ManifestPolicyTest {
                 configHosts.add(domain.getTextContent().trim());
             }
         }
-        assertEquals(new ArrayList<String>(app.arenawebview.locked.policy.ArenaAllowlist.FIRST_PARTY_HOSTS),
-                configHosts);
+
+        List<String> allowedHosts = new ArrayList<String>(
+                app.arenawebview.locked.policy.ArenaAllowlist.allowedHosts());
+        for (String host : configHosts) {
+            assertTrue("network config pins a host the policy does not allow: " + host,
+                    allowedHosts.contains(host));
+        }
+
+        // The first-party hosts must all be pinned explicitly (the app must never depend on the base
+        // config alone for the site it exists to show), and the sign-in page host must be there too.
+        for (String host : app.arenawebview.locked.policy.ArenaAllowlist.FIRST_PARTY_HOSTS) {
+            assertTrue("first-party host missing from the network config: " + host,
+                    configHosts.contains(host));
+        }
+        assertTrue("the sign-in page host must be pinned in the network config",
+                configHosts.contains("accounts.google.com"));
     }
 }

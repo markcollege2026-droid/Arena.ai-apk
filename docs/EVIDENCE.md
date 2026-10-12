@@ -12,13 +12,56 @@ paraphrased.
 | [38287613538](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38287613538) | `8697d6c` | after fixing those | unit + APK green; instrumented suite did not compile (3 wrong `WebSettings` getters) |
 | [38288257746](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288257746) | `4252a89` | after fixing those | unit + APK green; emulator: 32 tests, 1 failure (test built a `Message` with no target handler) |
 | [38288999321](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288999321) | `b34907f` | after that fix | unit-tests, build-apk and instrumented-tests all green |
-| [38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091) | `5134404`, tag `v1.0.0` | the release run | **all four jobs green, including `Publish release`** - this is the run whose APKs are on the [release](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0) |
+| [38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091) | `5134404`, tag `v1.0.0` | the 1.0.0 release run | **all four jobs green, including `Publish release`** - this is the run whose APKs are on the [release](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0) |
+| PENDING | this branch | the 1.1.0 run (Google sign-in + in-app CAPTCHA) | filled in from the run that produces the 1.1.0 APK - see below |
 
 Environment for the green run: `ubuntu-24.04` (image `20261004.327.1`), Temurin JDK `17.0.20+1`,
 Gradle 8.11 via the committed wrapper, AGP 8.7.3, compileSdk/targetSdk 35, minSdk 24, emulator
 API 34 `google_apis` x86_64 (`emulator-5554`).
 
-## 1. Job `unit-tests` - passed
+## 0. Preparing 1.1.0 without an Android SDK (local evidence)
+
+The sandbox this change was written in has no Android SDK and no network access to Google's Maven
+repository, so the APK cannot be built locally - that remains GitHub Actions' job. What *could* be run
+locally is the Android-free half of the suite, and it was, against a real compiler and a real JVM
+(`javac 1.8.0_152`, from an AOSP `prebuilts-jdk` checkout, plus a small JUnit-compatible runner that
+understands `@Test` and `@RunWith(Parameterized.class)`):
+
+```
+$ javac -encoding UTF-8 -d /tmp/out <policy sources> <jvm test sources>     # clean, no warnings shown
+$ java -cp /tmp/out TestRunner --scan app/src/test/java app/src/test/java
+Tests run: 1925, Failures: 0, Ignored: 0, Test classes: 7 (173 ms)
+```
+
+Per class, from the same run:
+
+```
+1883  app.arenawebview.locked.policy.UrlPolicyTest
+  11  app.arenawebview.locked.policy.AllowlistRegressionTest
+   5  app.arenawebview.locked.policy.BackNavigatorTest
+   6  app.arenawebview.locked.policy.PolicyMetricsTest
+   4  app.arenawebview.locked.policy.PolicyPurityTest
+   5  app.arenawebview.locked.ManifestPolicyTest
+  11  app.arenawebview.locked.SourceInvariantsTest
+```
+
+`UrlPolicyTest`'s 1883 comes from 269 cases x 7 assertions; the 269 are 229 base cases plus 40 cases that
+describe the sign-in/CAPTCHA configuration (`PolicyCases.all()` and
+`PolicyCases.withGoogleSignInAndCaptchaEnabled()`).
+
+The first local run was **not** clean, and the failure is the reason this section exists:
+
+```
+FAILED AllowlistRegressionTest.firstPartyHostsAreExactlyTheReviewedSet:
+  expected: <[arena.ai, www.arena.ai, ... trust.arena.ai]>            # 12 hosts
+  but was:  <[arena.ai, ..., trust.arena.ai, accounts.google.com, ... challenges.cloudflare.com]>   # 21
+```
+
+`allowedHosts()` is the *whole* enforced set, so the rewritten assertion was wrong, not the allow-list.
+It now asserts `firstPartyHosts + thirdPartyHosts == allowedHosts()` with no duplicates, which also fails
+if a host is ever enforced without being listed in one of the two reviewed lists.
+
+## 1. Job `unit-tests` - passed (1.0.0)
 
 ```
 > Found known Gradle Wrapper JAR files:
@@ -104,7 +147,7 @@ the signing block's timestamps, not the code, which is why every run prints its 
 `application-debuggable` is absent from the release badging - the check asserts its absence, so a
 debuggable release APK fails the build rather than shipping.
 
-## 3. Job `instrumented-tests` - passed (API 34 emulator)
+## 3. Job `instrumented-tests` - passed (API 34 emulator, 1.0.0)
 
 ```
 > Task :app:connectedDebugAndroidTest
@@ -189,3 +232,51 @@ I ArenaWebViewLocked: ignored incoming intent: action=null data=null (this app h
 `app-screenshot.png` is captured after the tests by reinstalling the debug APK, launching it and letting
 the site load for ~25 s in the emulator; it shows what this environment rendered, which is evidence of
 rendering and not a pixel-level assertion.
+
+---
+
+# The 1.1.0 run
+
+Everything in this section is filled in from the GitHub Actions run that builds the 1.1.0 APK, in the
+same verbatim style as above. Until the run exists, the entries below say PENDING; nothing here is a
+prediction.
+
+## 4. Job `unit-tests` (1.1.0) - PENDING
+
+Expected shape:
+
+```
+> Task :app:testDebugUnitTest
+BUILD SUCCESSFUL
+<tests completed>, 0 failed
+```
+
+## 5. Job `build-apk` (1.1.0) - PENDING
+
+`aapt2 dump badging` must show `versionCode='2' versionName='1.1.0'`, `minSdkVersion:'24'`,
+`targetSdkVersion:'35'`, the two network permissions, no `application-debuggable`, and exactly one
+launcher entry; the run prints the SHA-256 of both APKs, which is the checksum that matters for the
+artifact it produced.
+
+## 6. Job `instrumented-tests` (1.1.0) - PENDING
+
+Expected shape (46 tests):
+
+```
+> Task :app:connectedDebugAndroidTest
+Starting 46 tests on emulator-5554
+Tests on emulator-5554 passed
+```
+
+The two probes that only exist on a device are the interesting lines:
+
+```
+I ArenaWebViewLocked: google sign-in probe: url=...
+I ArenaWebViewLocked: google sign-in probe result: SIGNIN_FORM_PRESENT | ... | title=... | len=...
+I ArenaWebViewLocked: captcha probe result: ...
+```
+
+Read them literally: whichever of `SIGNIN_FORM_PRESENT` / `NO_FORM` and
+`BROWSER_REJECTED` / `NO_REJECTION_TEXT` appears, plus the page title, is what Google actually served to
+the emulator's WebView. The same block is echoed into the job summary by the workflow step
+"== google sign-in and CAPTCHA probes ==".

@@ -1,5 +1,7 @@
 package app.arenawebview.locked.web;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 
@@ -7,21 +9,38 @@ import app.arenawebview.locked.policy.PolicyMetrics;
 import app.arenawebview.locked.policy.PolicyResult;
 
 /**
- * Client attached to the <b>hidden</b> WebView that Android creates for {@code window.open()} and
+ * Client attached to the WebView that Android creates for {@code window.open()} and
  * {@code target="_blank"}.
  *
- * <p>The wrapper never shows a second window. {@code onCreateWindow} hands Chromium a WebView that is
- * never attached to the view hierarchy; this client catches the URL that window was about to load,
- * applies the same policy, and either re-routes it into the single visible WebView or refuses it.
- * Either way the hidden window is destroyed, so nothing that the page tries to open can ever become
- * visible, and every request it makes still goes through {@link ArenaWebViewClient}'s request
- * interception (this class is a subclass for exactly that reason).</p>
+ * <p>Every pop-up is decided here, and there are exactly three outcomes:</p>
+ * <ol>
+ *   <li><b>Ordinary allowed target</b> (a page on arena.ai, say {@code target="_blank"} on a
+ *       leaderboard link): the URL is handed to the single visible WebView and the extra window is
+ *       destroyed, exactly as before. Nothing new can ever appear on screen.</li>
+ *   <li><b>Sign-in hand-off</b> (Google's account host): the window is <em>kept</em> and handed to the
+ *       host, which shows it as an in-app sign-in window. This is the one case where a second WebView
+ *       stays alive, because the OAuth pop-up flow is not a navigation - Google's page returns the
+ *       result to the opening page through {@code window.opener}/postMessage, which only works if the
+ *       window it opened still exists. It stays inside this app, under the same policy and the same
+ *       request interception (this class extends {@link ArenaWebViewClient}).</li>
+ *   <li><b>Anything else</b>: refused, counted and reported; the window is destroyed.</li>
+ * </ol>
+ *
+ * <p>The sign-in window is fenced in: it may display Google's sign-in pages and Arena.ai pages - the two
+ * halves of the hand-off - and nothing else. Every other allowed URL (a first-party page that is not part
+ * of a sign-in, an asset host, anything the policy allows but that is not a step of this flow) is treated
+ * as an ordinary pop-up target: it is handed to the single visible WebView and this window is destroyed,
+ * so a sign-in window can never be steered into becoming a general-purpose browser.</p>
+ *
+ * <p>Both roles are checked on <em>every</em> navigation, not just the first one, so a window that was
+ * promoted for a Google page cannot later walk somewhere the policy would refuse.</p>
  */
 public final class PopupRouterClient extends ArenaWebViewClient {
 
     private final WebView popup;
     private final Runnable onClosed;
     private volatile boolean closed;
+    private boolean promotedToSignInWindow;
 
     public PopupRouterClient(GuardHost host, WebView popup, Runnable onClosed) {
         super(host);
@@ -51,22 +70,51 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             return true;
         }
         if (isInertPopupLocation(url)) {
-            // window.open() with no URL, or a script writing into a blank popup: keep the hidden window
-            // alive so a subsequent real navigation can still be routed, but never display anything.
+            // window.open() with no URL, or a script writing into a blank popup: keep the window alive
+            // so a subsequent real navigation can still be routed, but never display anything.
             return false;
         }
         PolicyResult result = host.policy().evaluateNavigation(url);
-        if (result.isAllowed()) {
-            host.metrics().increment(PolicyMetrics.Counter.ROUTED_POPUPS);
-            host.onPopupRouted(url);
-            host.loadVerifiedDestination(url, "popup");
-        } else {
+        if (!result.isAllowed()) {
             host.metrics().increment(PolicyMetrics.Counter.BLOCKED_POPUPS);
             host.metrics().recordBlock(result.reason(), result.canonicalHost(), url);
             host.onPopupBlocked(url, result);
+            finish();
+            // Always cancel the navigation in this window: nothing unverified is ever rendered.
+            return true;
         }
+
+        boolean signInStep = host.policy().isSignInNavigation(url);
+        boolean sitePage = host.policy().isProductNavigation(url);
+        if (promotedToSignInWindow ? (signInStep || sitePage) : signInStep) {
+            // The sign-in hand-off. The window has to stay alive because Google's page returns its result
+            // to the page that opened it through window.opener/postMessage - a flow that only works if the
+            // window it opened still exists.
+            //
+            // Two kinds of navigation belong to that hand-off and both stay in this window:
+            //   1. Google's own pages (the OAuth consent page, the identifier and password steps), and
+            //   2. the return hop to Arena.ai's callback URL, which is where the site reads the result and
+            //      usually closes the window itself with window.close().
+            // Returning false lets the window navigate itself; every hop is judged by the same policy, so
+            // the window can never end up on a host the main view would have refused.
+            if (!promotedToSignInWindow) {
+                promotedToSignInWindow = true;
+                host.metrics().increment(PolicyMetrics.Counter.SIGN_IN_WINDOWS);
+                host.onSignInWindowRequested(popup, url);
+            } else {
+                host.onSignInWindowNavigated(url);
+            }
+            return false;
+        }
+
+        // Any other allowed page: keep the single-view guarantee - hand it to the one visible WebView and
+        // discard the throwaway window Chromium created. This is also the defensive branch for a
+        // hypothetical future allow-list role that is neither a product page nor a sign-in step: such a URL
+        // can never gain a window of its own.
+        host.metrics().increment(PolicyMetrics.Counter.ROUTED_POPUPS);
+        host.onPopupRouted(url);
+        host.loadVerifiedDestination(url, "popup");
         finish();
-        // Always cancel the navigation in the hidden window: nothing is ever rendered there.
         return true;
     }
 
@@ -78,12 +126,37 @@ public final class PopupRouterClient extends ArenaWebViewClient {
                 || lower.startsWith("blob:");
     }
 
+    /** True once this window was promoted to a visible in-app sign-in window. */
+    public boolean isSignInWindow() {
+        return promotedToSignInWindow;
+    }
+
+    /**
+     * Tear this hidden window down and tell whoever created it.
+     *
+     * <p>Two separate things have to happen, in this order:</p>
+     * <ol>
+     *   <li><b>Deregister now.</b> The creator is told immediately, so the window stops occupying one of
+     *       the chrome client's live-window slots and the host stops tracking it. It is a plain callback,
+     *       safe to run inside a navigation callback, and it has to run synchronously: a window that is
+     *       only released "later" is a window that can be counted against the app's pop-up limit
+     *       indefinitely.</li>
+     *   <li><b>Destroy after the callback returns.</b> Destroying a {@code WebView} from inside its own
+     *       navigation callback is not safe, so the destruction is posted to the main looper - <em>not</em>
+     *       through {@link WebView#post(Runnable)}, which a detached view merely queues until something
+     *       attaches it. Nothing ever attaches a hidden pop-up, so that route would have left every hidden
+     *       window alive.</li>
+     * </ol>
+     */
     private void finish() {
         if (closed) {
             return;
         }
         closed = true;
-        popup.post(new Runnable() {
+        if (onClosed != null) {
+            onClosed.run();
+        }
+        Runnable destroy = new Runnable() {
             @Override
             public void run() {
                 try {
@@ -92,10 +165,8 @@ public final class PopupRouterClient extends ArenaWebViewClient {
                 } catch (Throwable ignored) {
                     // A dead WebView is not an error here; it must simply never come back.
                 }
-                if (onClosed != null) {
-                    onClosed.run();
-                }
             }
-        });
+        };
+        new Handler(Looper.getMainLooper()).post(destroy);
     }
 }

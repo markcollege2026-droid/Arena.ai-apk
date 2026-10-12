@@ -213,6 +213,8 @@ jobs:
             grep -E "watchdog|refused|recovery|start=|load \\(" docs/evidence/device-logcat.txt || true
             echo "=== third-party requests that the policy refused ==="
             grep -E "blocked by CORS policy" docs/evidence/device-logcat.txt | head -n 5 || true
+            echo "=== google sign-in and CAPTCHA probes ==="
+            grep -E "probe" docs/evidence/device-logcat.txt || true
             test ! -f /tmp/instrumented-failed
 
       - name: Publish instrumented test evidence

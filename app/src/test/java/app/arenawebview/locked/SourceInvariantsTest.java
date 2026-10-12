@@ -188,19 +188,68 @@ public class SourceInvariantsTest {
         assertFalse("nothing may be shared with another app", allMainSources().contains("ACTION_SEND"));
     }
 
+    /**
+     * Exactly two WebViews can exist, and both are accounted for:
+     *
+     * <ol>
+     *   <li>the primary one, created in {@code WebViewHardening} and owned by the activity; and</li>
+     *   <li>an ordinary pop-up window, which is destroyed by {@code PopupRouterClient} on its first
+     *       navigation - the one exception being a sign-in hand-off, which is shown in the in-app
+     *       window instead (never handed to a system browser).</li>
+     * </ol>
+     *
+     * <p>The invariant used to be "no second WebView is ever attached to a view hierarchy". Google
+     * sign-in needs the OAuth pop-up to stay alive ({@code window.opener}), so the rule is now: the only
+     * WebView that may ever be attached is the pop-up that {@code PopupRouterClient} explicitly promoted
+     * to a sign-in window, and the activity destroys it when the window closes.</p>
+     */
     @Test
-    public void theVisibleWebViewIsOnlyEverTheOnePrimaryWebView() throws Exception {
+    public void theOnlyWebViewsAreThePrimaryOneAndTheSignInWindow() throws Exception {
         String main = code("app/arenawebview/locked/MainActivity.java");
         String hardening = code("app/arenawebview/locked/web/WebViewHardening.java");
         String chrome = code("app/arenawebview/locked/web/ArenaWebChromeClient.java");
+        String router = code("app/arenawebview/locked/web/PopupRouterClient.java");
+        String authWindow = code("app/arenawebview/locked/ui/AuthWindow.java");
 
         assertFalse("the activity must not create WebViews itself", main.contains("new WebView("));
         assertTrue(main.contains("createPrimaryWebView"));
         // Exactly one WebView is created for the visible UI, in one place.
         assertEquals(1, count(hardening, "new WebView("));
-        // The only other WebView is the hidden pop-up window, and it is never attached to a view group.
-        assertFalse("a pop-up must never be added to a view hierarchy", chrome.contains("addView(popup"));
+        assertEquals("pop-up windows are created in exactly one place", 1, count(chrome, "new WebView("));
         assertTrue(chrome.contains("transport.setWebView(popup)"));
+
+        // A pop-up is only attached by the sign-in window, and only after the router promoted it.
+        assertFalse("a pop-up must never be added to a view hierarchy by the chrome client",
+                chrome.contains("addView(popup"));
+        assertFalse("a pop-up must never be added to a view hierarchy by the router",
+                router.contains("addView(popup"));
+        assertTrue("only the in-app sign-in window attaches a WebView",
+                authWindow.contains("content.addView(webView"));
+
+        // Promotion happens for sign-in URLs only, and the router asks the host to show it.
+        assertTrue(router.contains("isSignInNavigation(url)"));
+        assertTrue(router.contains("onSignInWindowRequested(popup, url)"));
+        assertTrue("the sign-in window must be torn down again", main.contains("closeSignInWindow"));
+        assertTrue("a closed sign-in window must destroy its WebView", main.contains("popup.destroy()"));
+        assertTrue("the watchdog must check the sign-in window too", main.contains("checkSignInWindowUrl"));
+    }
+
+    /**
+     * Enabling Google sign-in must not have opened a way out of the app: no system browser, no Custom
+     * Tab, no ACTION_VIEW, and the in-app window is a plain child view.
+     */
+    @Test
+    public void signInNeverLeavesTheApp() throws Exception {
+        String sources = allMainSources();
+        assertFalse("no Custom Tabs", sources.contains("androidx.browser"));
+        assertFalse("no ACTION_VIEW", sources.contains("Intent.ACTION_VIEW"));
+        assertFalse("no web-browser intent", sources.contains("setPackage(\"com.android.chrome\")"));
+        assertFalse("no chooser", sources.contains("createChooser"));
+
+        String authWindow = code("app/arenawebview/locked/ui/AuthWindow.java");
+        assertFalse("the sign-in window must not be its own activity", authWindow.contains("extends Activity"));
+        assertTrue("the sign-in window is a view inside the activity", authWindow.contains("extends FrameLayout"));
+        assertTrue("the user can always close it", authWindow.contains("auth_window_close"));
     }
 
     @Test

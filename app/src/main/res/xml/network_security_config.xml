@@ -7,6 +7,10 @@
   * trust-anchors = system only: no user-added CAs, so an installed "debug" proxy certificate cannot
     be used to intercept the app's traffic.
   * No <debug-overrides> block exists in this file, so debug builds are just as strict as release.
+  * The <domain-config> entries mirror the hosts this build may display as pages: Arena.ai's own hosts
+    plus accounts.google.com, which the "Continue with Google" sign-in hand-off needs. Asset-only hosts
+    (CAPTCHA widgets, Google's static assets) are covered by the base config - they get no special
+    treatment and no looser rules.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
@@ -27,6 +31,7 @@
         <domain includeSubdomains="false">help.arena.ai</domain>
         <domain includeSubdomains="false">status.arena.ai</domain>
         <domain includeSubdomains="false">trust.arena.ai</domain>
+        <domain includeSubdomains="false">accounts.google.com</domain>
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

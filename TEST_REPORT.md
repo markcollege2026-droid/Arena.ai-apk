@@ -1,163 +1,129 @@
 # Test report
 
-Everything below is the output of the CI run that built the APK attached to the
-[release](https://github.com/markcollege2026-droid/Arena.ai-apk/releases). Raw excerpts live in
-[docs/EVIDENCE.md](docs/EVIDENCE.md); the workflow is [.github/workflows/android.yml](.github/workflows/android.yml).
+What has actually been executed for **1.1.0** (Google sign-in + in-app CAPTCHA support), what it
+proved, and what it did not. Raw excerpts live in [docs/EVIDENCE.md](docs/EVIDENCE.md); the workflow is
+[.github/workflows/android.yml](.github/workflows/android.yml). The previous release's report is kept at
+the end of this file.
 
 | Suite | Where | Result |
 | --- | --- | --- |
-| Security core (URL policy, allow-list, back navigation, manifest, source invariants) | JVM, GitHub runner, JDK 17 | **1640 tests, 0 failures** |
-| APK build + artifact inspection | `aapt2 dump badging` on the shipped release APK | **all 10 checks passed** |
-| Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` | **32 tests, 0 failures** |
+| Security core (URL policy, allow-list, back navigation, manifest, source invariants) | JVM, JDK 17 - **run locally while preparing this release** (see §1) | **1925 tests, 0 failures** |
+| Same suite, authoritative build | JVM, GitHub runner, JDK 17 (`unit-tests` job) | PENDING - CI run for 1.1.0 |
+| APK build + artifact inspection | `aapt2 dump badging` on the shipped release APK | PENDING - CI run for 1.1.0 |
+| Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` (46 tests) | PENDING - CI run for 1.1.0 |
 
-Release run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091 ·
-tag `v1.0.0` · commit `5134404` · runner `ubuntu-24.04`, Temurin JDK 17.0.20, Gradle 8.11 (wrapper,
-hash-pinned), AGP 8.7.3, compileSdk/targetSdk 35, minSdk 24. The run before it (`b34907f`, run
-38288999321) produced the same results; the checksums below are the ones on the release page.
+Nothing in this file is a prediction: rows marked PENDING are filled in from the run that produces the
+APK, and a claim that is not backed by a run is written as unverified.
 
-## 1. JVM suite - 1640 tests, 0 failures
+## 1. JVM suite - 1925 tests, 0 failures
 
-`./gradlew :app:testDebugUnitTest`
+`./gradlew :app:testDebugUnitTest` (the CI job) - and, while preparing this release, the same sources
+compiled and executed locally with `javac 1.8.0_152` and a small JUnit-compatible runner, because this
+sandbox has no Android SDK. That local run is a *stronger* check than a brace-count, but it is not the
+authoritative one: the CI run is, and it uses the project's real JDK 17/Gradle toolchain.
 
-* **229 URL cases × 7 assertions (1603 parameterised tests)**. Every case states the exact expected
-  decision *and* the exact refusal reason, so `UrlPolicy` cannot silently change behaviour. Coverage
-  includes: the allowed hosts and paths; every rejected scheme (`http`, `file`, `content`, `intent`,
-  `market`, `javascript`, `ws:`, `wss:`, `ftp`, `chrome`, `vbscript`, ...); ports other than 443;
-  `userinfo@host`; IPv4/hex/decimal IP literals; non-ASCII and punycode hosts; lookalikes
-  (`arena.ai.evil.com`, `arena-ai.com`, `arena.ai.`, `аrena.ai` with a Cyrillic "а");
-  control characters, DEL, embedded tab/newline/CR, backslashes, percent-encoded hosts, empty and
-  `null` URLs; `about:blank`/`about:srcdoc`/`data:`/`blob:` handling (including a `blob:` whose
-  embedded origin is a third party - the blob is refused with the origin's own reason).
-* **Allow-list regression** (7 tests): the shipping host list is pinned element by element, so widening
-  it requires a visible edit; the third-party CAPTCHA entries are off by default, are resource-only and
-  are pinned to widget paths.
-* **Back navigation** (5 tests): only history entries that still pass policy may be revisited, unknown
-  history goes back to the start page, no history means "leave the app".
-* **Metrics** (6 tests): counters, bounded 50-entry block log, newest-first ordering, URL truncation,
-  query/fragment stripping in the report, reset.
-* **Policy purity** (4 tests): no Android imports in `policy/`, no `java.net.URI`/`URL` parsing (a
-  parser differential is a classic wrapper bypass), no logging or file access in the security core.
-* **Manifest + network security config** (6 tests): one exported activity, two permissions, not
-  debuggable, no backup, cleartext off, system-only trust anchors, no `debug-overrides`, and the
-  network config's host list is asserted equal to the runtime allow-list.
-* **Source invariants** (10 tests, comment-stripped scan): no JavaScript bridge; no `proceed()` on TLS
-  errors; exactly one call site loads a URL; no `startActivity*` delegation; hardened `WebSettings`
-  values present and the unsafe ones absent; debugging enabled only via `BuildConfig.DEBUG`; refusal
-  paths present in the chrome client; no `DownloadManager`/`ACTION_SEND`; only one visible WebView is
-  ever created and the hidden pop-up window is never attached to a view hierarchy; incoming intent data
-  is never read.
+| Class | Tests | What it pins |
+| --- | --- | --- |
+| `UrlPolicyTest` | **1883** | **269 URL cases × 7 assertions each** (1.0.0 had 229 cases). Every case states the expected decision *and* the exact refusal reason. 229 cases are the base table; **40 more describe the sign-in/CAPTCHA configuration**, including the hosts that must stay refused *next to* Google's. |
+| `AllowlistRegressionTest` | 11 | the exact enforced host list: first-party set, third-party set, "no host listed twice", "the enforced set is exactly the two reviewed lists", and that both capability switches are on in this build |
+| `BackNavigatorTest` | 5 | only history entries that still pass policy may be revisited; no history means "leave the app" |
+| `PolicyMetricsTest` | 6 | counters, bounded 50-entry block log, newest-first ordering, URL truncation, query/fragment stripping, reset |
+| `PolicyPurityTest` | 4 | no Android imports in `policy/`, no `java.net.URI`/`URL` parsing (parser differential = classic bypass), no logging or file access in the security core |
+| `ManifestPolicyTest` | 5 | one exported activity, two permissions, not debuggable, no backup, cleartext off, system-only trust anchors, and the network security config's pinned host set is a **subset of the runtime allow-list** |
+| `SourceInvariantsTest` | 11 | comment-stripped source scan: no JavaScript bridge; TLS errors never proceeded; exactly one URL-loading call site; no `startActivity*` delegation; hardened settings present/unsafe ones absent; **the sign-in window is a view, not an activity**; **no `ACTION_VIEW`, no `androidx.browser`, no `createChooser`**; the hidden pop-up window is never attached to a view hierarchy by the pop-up plumbing |
 
-Four failures were found by the first run and fixed before this build (they were test bugs, not policy
-bugs, and they are recorded rather than quietly repaired):
+Three things the new coverage is built to catch:
 
-1. `ManifestPolicyTest` read the network security config with an `android:`-namespace lookup, but those
-   attributes are unprefixed.
-2-4. Three `SourceInvariantsTest` checks tripped over the *comments* of the code under test (a Javadoc
-   that mentions `handler.proceed()` while explaining why it is never called). The scan now removes
-   comments while preserving string/char literals.
+1. **A Google host that is not needed.** The capability table has 14 `doc()`/`sub()` rows for hosts that
+   must stay refused - Gmail, Drive, Docs, Play, `googleapis.com`, other `googleusercontent.com` hosts,
+   `accounts.google.com.evil.example` - so "sign-in support" cannot quietly become "Google is allowed".
+2. **A CAPTCHA host that is not a widget.** `www.google.com` is allowed *only* on `/recaptcha/`; the
+   table asserts that Google Search, `/accounts/` and any other path on that host are refused, and that
+   percent-encoded or `..` path escapes (`/recaptcha%2f..%2fx`) are refused as well.
+3. **An asset host becoming a page.** `ssl.gstatic.com/accounts/o/x.gif` is allowed as a *sub-resource*
+   and refused as a *document* (`DOCUMENT_NOT_ALLOWED`), which is what stops the sign-in mechanism from
+   being usable as a general-purpose window.
 
-## 2. The shipped APK
+One real failure was found by the local run and fixed before this build: the rewritten
+`AllowlistRegressionTest` asserted that `ArenaAllowlist.allowedHosts()` equals the first-party list,
+which is wrong once capability groups are enabled - `allowedHosts()` is the *whole* enforced set. It now
+asserts `firstPartyHosts + thirdPartyHosts == allowedHosts()`, with no duplicates, which is a stronger
+statement than the one that failed. (Recorded rather than quietly repaired.)
 
-```
-package: name='app.arenawebview.locked' versionCode='1' versionName='1.0.0' compileSdkVersion='35'
-minSdkVersion:'24'   targetSdkVersion:'35'
-uses-permission: name='android.permission.INTERNET'
-uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
-application-label:'Arena WebView (Locked)'
-launchable-activity: name='app.arenawebview.locked.MainActivity'
+## 2. What changed for sign-in, and the tests that cover it
 
-ok: package id / version name / INTERNET / no CAMERA / no location / no storage / no READ_CONTACTS
-ok: not debuggable
-ok: launcher entry present / one launcher entry only
-```
-
-```
-dcf418e8438071badf57f52411533f9b2a9fa987b07e52311ffc6af608500a3a  app-release.apk   (42,420 bytes)
-ac9a86673d0c18faa14e806712b3e89fdd929b57bc4449c107ee7e7c5743ec1f  app-debug.apk     (53,560 bytes)
-```
-
-These are the exact bytes attached to
-[release v1.0.0](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0)
-(`APK-SHA256SUMS.txt` next to them in the release and in the `arena-webview-apk` artifact). APK bytes
-are not bit-for-bit reproducible across runs - the signing block carries timestamps - so a rebuild
-produces its own checksum; the one that matters is the one printed by the run that produced the file.
-
-The "not debuggable" check is an assertion, so a debuggable release APK fails the build instead of
-shipping.
-
-## 3. Guards on a real WebView - 32 tests, 0 failures
-
-`./gradlew :app:connectedDebugAndroidTest` on an API 34 (`google_apis`, x86_64) emulator, emulator-5554.
+Google sign-in is an **OAuth pop-up** flow: the site opens a window, Google authenticates inside it, and
+the result goes back to the opening page through `window.opener`. A wrapper that destroys every pop-up
+breaks that flow, so 1.1.0 has one carefully bounded exception.
 
 | Class | Tests | What it proves |
 | --- | --- | --- |
-| `AppSurfaceTest` | 1 | as installed: exactly one activity, exported, `singleTop`, no alias, zero services/receivers/providers, exactly the two network permissions |
-| `WebViewSettingsTest` | 5 | on the WebView the app itself builds: JS, DOM storage, images, zoom, wide viewport, media autoplay and multi-window on; file/content access, mixed content, file-URL access off; Safe Browsing on; user-agent keeps real version info but drops `; wv` |
-| `NavigationGuardTest` | 11 | direct calls into the shipping `ArenaWebViewClient`: allowed navigation allowed; third-party navigation, sub-resource, iframe and redirect refused; custom schemes and cleartext refused; lookalike host refused; `null` URL fails closed; `data:` document refused; blocked sub-resources answered with an in-process 403 (no network) and counted |
-| `PopupBlockingTest` | 5 | pop-up decisions through `PopupRouterClient`: an allowed URL is routed into the single WebView, anything else is refused and counted; a dialog pop-up is refused; `onCreateWindow` hands Chromium a hidden WebView that is never attached to a view hierarchy and carries the same hardened settings |
-| `DownloadGuardTest` | 1 | three download attempts (including a `blob:` and an `.apk`) are refused, counted and reported |
-| `EscapeAttemptTest` | 4 | `startActivity`/`startActivityForResult` refuse (activity monitor sees no launch); file chooser completes with `null`; geolocation is denied in-process; a hostile incoming intent cannot steer the app |
-| `WatchdogRecoveryTest` | 2 | a deliberately unguarded `WebView.loadUrl("https://evil.example/...")` is caught: the URL is refused, counted, never displayed, and the app recovers to the start page |
-| `BackNavigationTest` | 2 | back never leaves the app on a single press, never starts another activity, and needs a deliberate second press to exit |
-| `LiveArenaSmokeTest` | 1 | the real site, described below |
+| `PopupBlockingTest` | **12** | all three pop-up outcomes: an allowed URL is routed into the single visible WebView; a third party is refused, counted, and the window destroyed; **a sign-in URL keeps its window and it is shown in-app**; **the return hop to Arena.ai's callback stays in that window** (cancelling it would break the flow); **the window is still fenced** - an asset host or a third party is refused even after promotion; **a site pop-up is never promoted**; `window.close()` from the page is reported to the app; **hidden windows are released immediately**, and twelve pop-ups in a row do not trip the app's own three-window cap |
+| `AuthWindowTest` | **5** | the sign-in window is part of the activity's own view hierarchy (no second activity), it hosts exactly the pop-up WebView, repeated hand-off navigations reuse the same window instead of stacking, the close button hides it and detaches the WebView, back closes it first and does not finish the activity |
+| `GoogleSignInLiveTest` | **2** | on a device: the app reaches `accounts.google.com`, the page that arrives is served by an allowed host, and the result is **logged** (which page Google actually served) rather than asserted; a second probe logs which CAPTCHA the real site references |
+| `SourceInvariantsTest` | 11 | the code-level fences listed in §1 - the sign-in support cannot introduce a Custom Tab, an `ACTION_VIEW`, a chooser or an extra activity without failing the build |
 
-One failure was found and fixed before this build: `PopupBlockingTest.onCreateWindowHandsOverAHiddenWebView`
-built a bare `Message.obtain()` with no target handler, so Chromium's own `sendToTarget()` contract
-could not be satisfied. The test now builds the message from a `Handler` (as Chromium does), and
-`ArenaWebChromeClient` additionally treats an unanswerable transport message as a blocked pop-up
-instead of letting the exception escape.
+Two implementation bugs were found while writing those tests and fixed:
 
-### The live site, on the device (logcat evidence)
+* **The sign-in window could never close itself.** Chromium delivers `window.close()` only to a
+  `WebChromeClient`; the pop-up WebView had none, so Google's returning page could not end the hand-off
+  and the in-app window would have hung around. The activity now attaches a guarded chrome client to the
+  sign-in window (which also puts JS dialogs, permission requests and file choosers behind the same
+  refusals as the main view).
+* **Every hidden pop-up leaked.** The teardown was scheduled with `WebView.post(...)`, and a *detached*
+  view only queues posted runnables until something attaches it - and nothing attaches a hidden pop-up.
+  The window was therefore never destroyed and never released from the chrome client's live-window list,
+  so after three pop-ups the app would have refused every further `window.open()` forever.
+  `PopupRouterClient` now releases the window synchronously (so the cap is never consumed by a dead
+  window) and destroys the WebView on the main looper afterwards (destroying a WebView inside its own
+  navigation callback is not safe). `finishedWindowsDoNotPileUpAgainstTheOpenWindowLimit` fails if this
+  regresses.
 
-The emulator has a network path to arena.ai, so the smoke test exercised the real site. The device log
-shows, in order:
+## 3. The live site and Google, on a device
 
-* the app printing its policy and loading `arena.ai` (`load (startup): arena.ai`);
-* the smoke test landing on the site and executing script in its page context:
+The `instrumented-tests` job runs on an API 34 emulator with a working network path, and
+`GoogleSignInLiveTest` records what really happened rather than asserting a hoped-for outcome. The
+device log for the 1.1.0 run is reproduced in [docs/EVIDENCE.md](docs/EVIDENCE.md); the two lines that
+matter are the ones starting `google sign-in probe:` and `captcha probe result:`. If Google answers
+embedded WebViews with its "this browser or app may not be secure" page, the log says so, and the README
+states that as a limitation instead of this report claiming sign-in works end to end.
 
-  ```
-  I ArenaWebViewLocked: live smoke test: url after load = https://arena.ai/
-  I ArenaWebViewLocked: evaluateJavascript returned: 2
-  ```
-
-  i.e. the app is on `https://arena.ai/` and `evaluateJavascript("(function(){return 1+1;})()")`
-  returned the correct result, which is only possible when JavaScript is actually running in the page;
-* **the site's own JavaScript executing** - console messages originating from
-  `https://arena.ai/_next/static/chunks/18zyla74w09g6.js` and `https://arena.ai/rpc/static/web-vitals.js`;
-* **third-party requests being refused** - Chromium reports `blocked by CORS policy` for
-  `static.cloudflareinsights.com/beacon.min.js` and for `browser-intake-us3-datadoghq.com/api/v2/rum`,
-  i.e. the wrapper's policy stopped analytics beacons that the real page tried to send;
-* the watchdog catching the deliberately injected `https://evil.example/definitely-not-allowed`
-  (`watchdog found a non-approved URL, resetting: BLOCK reason=HOST_NOT_ALLOWED host=evil.example`),
-  and the same reason being reported by the page hooks and by the activity's own re-check.
-
-The smoke test asserts the app is on `https://arena.ai/` and never anywhere else. It is written to be
-offline-tolerant (an emulator without a route to the site records "nothing loaded" rather than a false
-failure), so this section is evidence from *this* run rather than a guarantee of every run.
-
-## 4. What is not covered by an automated test
+## 4. What is *not* covered by an automated test
 
 Stated plainly, because a wrapper's weaknesses matter more than its claims:
 
+* **The interactive consent flow is not automated.** No test drives a real Google account through the
+  identifier/password/consent pages: that needs a human, a real credential and a CAPTCHA answer, and
+  automating it is exactly what this project refuses to do. What is tested is the mechanism (the window
+  is kept, fenced, closable, destroyed) and the reachability of the host.
+* **Google's own decision about embedded browsers** is outside this app's control and is only *reported*
+  by the probe, never worked around (no user-agent spoofing, no Custom Tab, no `ACTION_VIEW`).
+* **A CAPTCHA cannot be forced on demand**, so the widget test logs what the site references in that
+  environment instead of asserting a challenge appeared.
 * **WebSocket/WebRTC payloads** are not inspectable through `shouldInterceptRequest`; the handshake URL
-  is policy-checked, the stream is not. No automated test asserts anything about their contents.
-* **Media-capture denial** (`onPermissionRequest`) is covered by a source invariant only: driving it on
-  a device requires the page to request the microphone/camera, which the smoke test does not do.
-* **Chromium's own parser** is not re-tested. The policy is validated against the case table and against
-  what the live site actually does (above), not against a WebView conformance suite.
-* **A rooted device or a repackaged APK** defeats the wrapper; nothing here can detect that.
-* **Arena.ai's server-side behaviour** (auth, CAPTCHA, rate limits) is deliberately untouched and not
-  characterised by these tests; the wrapper never bypasses it.
-* The **screenshot** captured by CI (`docs/evidence/app-screenshot.png`, attached to the run) shows what
-  the emulator rendered in that environment; it is evidence of rendering, not a pixel-level assertion.
+  is policy-checked, the stream is not.
+* **Media-capture denial** is covered by a source invariant only: driving it needs a page that asks for
+  the microphone/camera, which the test suite does not do.
+* **A rooted device, or a repackaged APK**, defeats the wrapper; nothing here detects that.
+* **Arena.ai's server-side behaviour** (auth, CAPTCHA, rate limits) is deliberately untouched.
 
 ## 5. Reproduce
 
 ```bash
-./gradlew :app:testDebugUnitTest          # 1640 tests, seconds
+./gradlew :app:testDebugUnitTest          # 1925 tests, seconds
 ./gradlew :app:assembleDebug :app:assembleRelease
-./gradlew :app:connectedDebugAndroidTest  # needs an emulator/device
+./gradlew :app:connectedDebugAndroidTest  # 46 tests, needs an emulator/device
 ```
 
-or push to the repository and read the `Android CI` run - the same three jobs, plus a badging
-verification of the artifact and, on a `v*` tag, a GitHub Release with the APKs.
+or push to the repository and read the `Android CI` run: the same three jobs, a badging verification of
+the artifact, and - on a `v*` tag - a GitHub Release with the APKs.
+
+---
+
+## Appendix: the 1.0.0 release (for reference)
+
+Release [v1.0.0](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0), run
+[38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091): 1640 JVM
+tests / 32 instrumented tests / 0 failures, `versionName 1.0.0`, `app-release.apk` 42,420 bytes,
+SHA-256 `dcf418e8438071badf57f52411533f9b2a9fa987b07e52311ffc6af608500a3a`. In that build every Google and
+CAPTCHA host was refused, and the guarantees were the 18 rows of the README's table as it stood then.

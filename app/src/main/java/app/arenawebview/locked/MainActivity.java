@@ -39,6 +39,7 @@ import app.arenawebview.locked.policy.BackNavigator;
 import app.arenawebview.locked.policy.PolicyConfig;
 import app.arenawebview.locked.policy.PolicyMetrics;
 import app.arenawebview.locked.policy.PolicyResult;
+import app.arenawebview.locked.ui.AuthWindow;
 import app.arenawebview.locked.ui.StatusOverlay;
 import app.arenawebview.locked.web.ArenaWebChromeClient;
 import app.arenawebview.locked.web.ArenaWebViewClient;
@@ -78,6 +79,22 @@ public class MainActivity extends Activity implements GuardHost {
     private WebView webView;
     private ArenaWebChromeClient chromeClient;
     private StatusOverlay overlay;
+
+    /**
+     * The in-app window a sign-in hand-off is shown in (Google's account pages). Null-hosted most of the
+     * time; created once with the view hierarchy. {@link #signInWindowWebView} is the pop-up WebView
+     * currently living inside it.
+     */
+    private AuthWindow authWindow;
+    private WebView signInWindowWebView;
+
+    /**
+     * Chrome-level guard for the sign-in window. It has to be a {@code WebChromeClient} of its own for two
+     * reasons: {@code window.close()} - which the returning OAuth page calls to finish the hand-off - is
+     * only delivered to a chrome client, and a pop-up must not get the platform's default dialogs or
+     * permission prompts.
+     */
+    private ArenaWebChromeClient signInWindowChromeClient;
 
     private FrameLayout fullscreenContainer;
     private View fullscreenView;
@@ -134,6 +151,15 @@ public class MainActivity extends Activity implements GuardHost {
             }
         });
         root.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        authWindow = new AuthWindow(this, new AuthWindow.Listener() {
+            @Override
+            public void onCloseRequested() {
+                closeSignInWindow("user");
+            }
+        });
+        root.addView(authWindow, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         applyWindowInsetsPadding();
@@ -199,6 +225,7 @@ public class MainActivity extends Activity implements GuardHost {
     @Override
     protected void onDestroy() {
         stopWatchdog();
+        closeSignInWindow("destroy");
         if (chromeClient != null) {
             chromeClient.destroyPopups();
         }
@@ -250,6 +277,12 @@ public class MainActivity extends Activity implements GuardHost {
 
     /** Single entry point for every back gesture. */
     public void handleBackPressed() {
+        if (authWindow != null && authWindow.isWindowVisible()) {
+            // Back closes the sign-in window (and destroys its WebView) before anything else, so the
+            // auth flow can never swallow the back gesture.
+            closeSignInWindow("back");
+            return;
+        }
         if (fullscreenView != null) {
             exitFullscreen(true);
             return;
@@ -461,6 +494,8 @@ public class MainActivity extends Activity implements GuardHost {
     public void onRecoveryRequired(String reason, String offendingUrl) {
         metrics.increment(PolicyMetrics.Counter.RECOVERY_RELOADS);
         Log.w(TAG, "recovery (" + reason + ") from " + offendingUrl);
+        // A page that ended up somewhere unverified takes its sign-in window down with it.
+        closeSignInWindow("recovery:" + reason);
         if (overlay.isOverlayVisible()) {
             // The native overlay is already covering the WebView: nothing unverified is visible.
             return;
@@ -480,7 +515,90 @@ public class MainActivity extends Activity implements GuardHost {
 
     @Override
     public void onPopupClosed(WebView popup) {
-        // nothing to do
+        if (popup != null && popup == signInWindowWebView) {
+            closeSignInWindow("page-closed");
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Sign-in window (the one case where a second WebView may be on screen)
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * A pop-up turned out to be a sign-in hand-off: show it as an in-app window.
+     *
+     * <p>Idempotent for the same WebView - the hand-off navigates several times (identifier, password,
+     * consent) and each one re-enters here.</p>
+     */
+    @Override
+    public void onSignInWindowRequested(WebView popup, String url) {
+        if (popup == null || authWindow == null) {
+            return;
+        }
+        if (signInWindowWebView != null && signInWindowWebView != popup) {
+            // Only one sign-in window at a time; a second hand-off replaces the first.
+            closeSignInWindow("replaced");
+        }
+        signInWindowWebView = popup;
+        try {
+            // Nothing hidden: this makes the sign-in window answer window.close() (the OAuth return page
+            // ends the hand-off with it) and keeps every dialog, permission prompt and file chooser inside
+            // the same guards as the main view.
+            signInWindowChromeClient = new ArenaWebChromeClient(this, this);
+            popup.setWebChromeClient(signInWindowChromeClient);
+        } catch (Throwable t) {
+            Log.w(TAG, "could not attach the sign-in window's chrome client", t);
+        }
+        Log.i(TAG, "sign-in window opened inside the app: " + describeDestination(url, null));
+        // The window title says where the sign-in is happening, so the user can see that this is Google's
+        // page inside the app and not something the app renders itself.
+        authWindow.show(popup, getString(R.string.auth_window_title) + " - " + destinationHost(url, null));
+    }
+
+    @Override
+    public void onSignInWindowClosed(String reason) {
+        Log.i(TAG, "sign-in window closed: " + reason);
+    }
+
+    @Override
+    public void onSignInWindowNavigated(String url) {
+        Log.i(TAG, "sign-in window navigated: " + describeDestination(url, null));
+        if (signInWindowWebView != null && authWindow != null && authWindow.isWindowVisible()) {
+            // Keep the window's caption honest about which page is inside it.
+            authWindow.show(signInWindowWebView, getString(R.string.auth_window_title)
+                    + " - " + destinationHost(url, null));
+        }
+    }
+
+    /**
+     * Close and destroy the sign-in window. Closing an OAuth window early is not an error: the flow
+     * simply does not complete, and the site stays logged out - which is the fail-closed outcome.
+     */
+    private void closeSignInWindow(String reason) {
+        WebView popup = signInWindowWebView;
+        boolean wasOpen = popup != null || (authWindow != null && authWindow.isWindowVisible());
+        signInWindowWebView = null;
+        ArenaWebChromeClient chrome = signInWindowChromeClient;
+        signInWindowChromeClient = null;
+        if (chrome != null) {
+            // Any window the sign-in page itself opened dies with it; no orphan WebView survives a login.
+            chrome.destroyPopups();
+        }
+        if (authWindow != null) {
+            authWindow.hide();
+        }
+        if (popup != null) {
+            try {
+                popup.stopLoading();
+                popup.setWebViewClient(new WebViewClient());
+                popup.destroy();
+            } catch (Throwable t) {
+                Log.w(TAG, "sign-in window teardown failed", t);
+            }
+        }
+        if (wasOpen) {
+            onSignInWindowClosed(reason);
+        }
     }
 
     @Override
@@ -704,6 +822,7 @@ public class MainActivity extends Activity implements GuardHost {
      * service-worker navigation, a bug in the WebView, or a future edit to this app).
      */
     private void tickWatchdog() {
+        checkSignInWindowUrl();
         WebView view = webView;
         if (view == null) {
             return;
@@ -723,6 +842,34 @@ public class MainActivity extends Activity implements GuardHost {
             return;
         }
         loadVerifiedDestination(policy.primaryUrl(), "watchdog");
+    }
+
+    /**
+     * The sign-in window is subject to the same last-line-of-defence check as the main view. It should be
+     * impossible for it to hold an off-policy URL (its client refuses such navigations and requests), but
+     * if it ever did, the window is closed rather than trusted.
+     */
+    private void checkSignInWindowUrl() {
+        WebView popup = signInWindowWebView;
+        if (popup == null) {
+            return;
+        }
+        String current;
+        try {
+            current = popup.getUrl();
+        } catch (Throwable t) {
+            return;
+        }
+        if (current == null || current.isEmpty()) {
+            return;
+        }
+        PolicyResult result = policy.evaluateNavigation(current);
+        if (result.isAllowed()) {
+            return;
+        }
+        metrics.recordBlock(result.reason(), result.canonicalHost(), current);
+        Log.w(TAG, "sign-in window was on a non-approved URL, closing it: " + result.describe());
+        closeSignInWindow("watchdog:" + (result.reason() == null ? "?" : result.reason().name()));
     }
 
     private void copyDiagnosticsToClipboard() {

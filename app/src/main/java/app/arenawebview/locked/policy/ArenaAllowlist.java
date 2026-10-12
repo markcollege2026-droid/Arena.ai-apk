@@ -2,7 +2,9 @@ package app.arenawebview.locked.policy;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The single source of truth for what this wrapper may reach.
@@ -20,8 +22,31 @@ import java.util.List;
  * ({@code okta.arena.ai}) are deliberately <em>not</em> listed - they are not needed to use the
  * product and are exactly the kind of surface a locked-down wrapper should stay away from.</p>
  *
- * <h3>Third-party capability entries</h3>
- * <p>Off by default. See {@link #ENABLE_THIRD_PARTY_CAPABILITY_ENTRIES}.</p>
+ * <h3>Sign-in and CAPTCHA hosts (enabled in this build)</h3>
+ * <p>Arena AI offers sign-in with a Google account ("Continue with Google"), so this build allows the
+ * hosts that flow needs, plus the CAPTCHA widget hosts so a challenge can be <em>displayed and
+ * answered by the user</em> instead of being blocked. Both groups are one-line switches
+ * ({@link #ENABLE_GOOGLE_SIGN_IN}, {@link #ENABLE_CAPTCHA_WIDGETS}) and both are pinned as narrowly as
+ * the flow tolerates:</p>
+ * <ul>
+ *   <li>{@code accounts.google.com} - the only third-party host that may ever become a visible
+ *       <em>page</em> ({@code Role.SIGN_IN}). Google's sign-in flow lives at many paths under this one
+ *       host, so it is listed without a path restriction; the host is Google's account host and
+ *       nothing else.</li>
+ *   <li>{@code ssl.gstatic.com}, {@code www.gstatic.com}, {@code apis.google.com},
+ *       {@code fonts.gstatic.com}, {@code lh3.googleusercontent.com} - assets used <em>by</em> Google's
+ *       sign-in pages and by the site's account menu. All of them are {@code Role.ASSET}: sub-resources
+ *       only, path-pinned, and never navigable.</li>
+ *   <li>{@code www.google.com/recaptcha/}, {@code www.gstatic.com/recaptcha/},
+ *       {@code www.recaptcha.net/recaptcha/} and {@code challenges.cloudflare.com/turnstile/} - the
+ *       CAPTCHA widgets, again assets only and pinned to the widget path. Google search, Gmail, Drive
+ *       and every other Google product stay unreachable: a host that is not in this file does not
+ *       exist as far as the app is concerned.</li>
+ * </ul>
+ *
+ * <p><b>What the wrapper still does not do:</b> it never solves, answers, bypasses or automates a
+ * CAPTCHA, it never reads, stores or transmits a credential, and it has no JavaScript bridge. The user
+ * answers challenges and types passwords; the app only decides which hosts may take part.</p>
  */
 public final class ArenaAllowlist {
 
@@ -32,27 +57,26 @@ public final class ArenaAllowlist {
     public static final List<String> FIRST_PARTY_HOSTS;
 
     /**
-     * <b>Off by default - read this before turning it on.</b>
+     * Sign-in with a Google account. Arena AI offers it as "Continue with Google", and the flow cannot
+     * complete without reaching Google's account host.
      *
-     * <p>Two capabilities of the real arena.ai page are served from third-party hosts that cannot be
-     * reached from {@code arena.ai} itself:</p>
-     * <ul>
-     *   <li>the reCAPTCHA widget, served from {@code www.google.com/recaptcha/*} and
-     *       {@code www.gstatic.com/recaptcha/*};</li>
-     *   <li>the Cloudflare Turnstile challenge widget, served from
-     *       {@code challenges.cloudflare.com/turnstile/*}.</li>
-     * </ul>
-     *
-     * <p>Those are the only third-party hosts that would ever be reachable, they are pinned to the
-     * exact asset path of the widget (never the whole domain - {@code www.google.com/search} stays
-     * unreachable), and they are HTTP GET-only asset loads. Even so, enabling them means the app can
-     * talk to two hosts that are not Arena AI, and a CAPTCHA challenge is a browser check that the
-     * wrapper must deliberately not interfere with, so the honest default is
-     * <b>off</b>: if Arena AI shows a challenge, the wrapper shows its in-app message instead of
-     * silently contacting Google. Flip this constant to {@code true} and rebuild if a deployment
-     * turns out to require the widget (see README, "Third-party capability entries").</p>
+     * <p>Set to {@code false} to remove every Google host from the policy: the wrapper then behaves
+     * exactly like the first-party-only build (sign-in falls back to whatever Arena AI offers without
+     * Google, and Google's pages are refused like any other third party).</p>
      */
-    public static final boolean ENABLE_THIRD_PARTY_CAPABILITY_ENTRIES = false;
+    public static final boolean ENABLE_GOOGLE_SIGN_IN = true;
+
+    /**
+     * CAPTCHA widget hosts (reCAPTCHA and Cloudflare Turnstile). Arena AI sits behind Cloudflare, so a
+     * challenge is a normal thing to encounter.
+     *
+     * <p>These are <em>assets only</em>: the challenge iframe is a sub-resource of the arena.ai page, so
+     * the widget can render and the user can answer it, but the app can never be navigated to a CAPTCHA
+     * host as a page. Enabling them does not weaken any check - the wrapper still does not solve,
+     * pre-answer or script a challenge, and {@code www.google.com} remains unreachable outside
+     * {@code /recaptcha/}.</p>
+     */
+    public static final boolean ENABLE_CAPTCHA_WIDGETS = true;
 
     static {
         List<String> hosts = new ArrayList<String>();
@@ -75,12 +99,17 @@ public final class ArenaAllowlist {
         return Collections.unmodifiableList(hosts);
     }
 
-    /** The entries actually enforced by this build (first-party, plus the opt-in widgets if enabled). */
+    /** The entries actually enforced by this build (first-party, plus the enabled capability groups). */
     public static List<AllowEntry> activeEntries() {
         List<AllowEntry> entries = new ArrayList<AllowEntry>(firstPartyEntries());
-        if (ENABLE_THIRD_PARTY_CAPABILITY_ENTRIES) {
-            entries.addAll(capabilityEntries());
+        List<List<AllowEntry>> groups = new ArrayList<List<AllowEntry>>();
+        if (ENABLE_GOOGLE_SIGN_IN) {
+            groups.add(signInEntries());
         }
+        if (ENABLE_CAPTCHA_WIDGETS) {
+            groups.add(captchaEntries());
+        }
+        entries.addAll(merge(groups));
         return Collections.unmodifiableList(entries);
     }
 
@@ -107,22 +136,117 @@ public final class ArenaAllowlist {
     }
 
     /**
-     * Third-party widget hosts, each pinned to the exact asset path of the widget and nothing else.
-     * Only active when {@link #ENABLE_THIRD_PARTY_CAPABILITY_ENTRIES} is true.
+     * The Google sign-in hand-off. Exactly one host may become a page; everything else is an asset used
+     * by Google's own pages.
      */
-    public static List<AllowEntry> capabilityEntries() {
+    public static List<AllowEntry> signInEntries() {
+        List<AllowEntry> entries = new ArrayList<AllowEntry>();
+        entries.add(AllowEntry.signIn("accounts.google.com", Collections.<String>emptyList(),
+                "Google's account/sign-in pages - the \"Continue with Google\" hand-off. Displayed only "
+                        + "as a page, only while the user is signing in."));
+        entries.add(AllowEntry.resourceOnly("ssl.gstatic.com", paths("/accounts/", "/gsi/"),
+                "Assets for Google's sign-in and account pages."));
+        entries.add(AllowEntry.resourceOnly("www.gstatic.com", paths("/accounts/", "/gsi/"),
+                "Assets for Google's sign-in and account pages."));
+        entries.add(AllowEntry.resourceOnly("apis.google.com", paths("/js/", "/gsi/"),
+                "Google's client-side identity/gapi scripts loaded by the sign-in hand-off."));
+        entries.add(AllowEntry.resourceOnly("fonts.gstatic.com", Collections.singletonList("/s/"),
+                "Web font files used by Google's pages (cosmetic only)."));
+        entries.add(AllowEntry.resourceOnly("lh3.googleusercontent.com", Collections.singletonList("/a/"),
+                "Account avatars in the site's account menu (images only)."));
+        return Collections.unmodifiableList(entries);
+    }
+
+    /**
+     * CAPTCHA widget assets: reCAPTCHA (on Google's asset hosts and on the
+     * {@code recaptcha.net} alias Google documents for restricted environments) and Cloudflare
+     * Turnstile. Sub-resources only, path-pinned, never a page.
+     */
+    public static List<AllowEntry> captchaEntries() {
         List<AllowEntry> entries = new ArrayList<AllowEntry>();
         entries.add(AllowEntry.resourceOnly("www.google.com", Collections.singletonList("/recaptcha/"),
                 "reCAPTCHA widget assets only - never Google search, accounts or APIs, and never a page."));
         entries.add(AllowEntry.resourceOnly("www.gstatic.com", Collections.singletonList("/recaptcha/"),
                 "reCAPTCHA static assets only - never a page."));
+        entries.add(AllowEntry.resourceOnly("www.recaptcha.net", Collections.singletonList("/recaptcha/"),
+                "reCAPTCHA assets on the alternate domain Google documents for restricted networks."));
         entries.add(AllowEntry.resourceOnly("challenges.cloudflare.com", Collections.singletonList("/turnstile/"),
                 "Cloudflare Turnstile widget assets only - never a page."));
         return Collections.unmodifiableList(entries);
     }
 
+    /**
+     * Every non-Arena host this build can reach, in policy order. Pinned by
+     * {@code AllowlistRegressionTest}: this list is the app's whole third-party surface.
+     */
+    public static List<String> thirdPartyHosts() {
+        List<String> hosts = new ArrayList<String>();
+        for (AllowEntry entry : activeEntries()) {
+            if (!entry.isProduct()) {
+                hosts.add(entry.host());
+            }
+        }
+        return Collections.unmodifiableList(hosts);
+    }
+
+    /** True when this exact host may be displayed as a sign-in page in the runner-up window. */
+    public static boolean isSignInHost(String canonicalHost) {
+        if (canonicalHost == null) {
+            return false;
+        }
+        for (AllowEntry entry : activeEntries()) {
+            if (entry.isSignIn() && entry.host().equals(canonicalHost)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Build the policy enforced by this build. */
     public static PolicyConfig productionConfig() {
         return new PolicyConfig(PRIMARY_URL, activeEntries());
+    }
+
+    // -----------------------------------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------------------------------
+
+    /**
+     * Merges capability groups into one entry per host, unioning their path prefixes.
+     *
+     * <p>Two groups can legitimately want the same host (Google's {@code www.gstatic.com} serves both
+     * sign-in and reCAPTCHA assets). {@link PolicyConfig#findByHost(String)} returns the first entry for
+     * a host, so a host listed twice would silently hide the second list's paths; merging keeps every
+     * prefix reachable and makes the enforced set exactly what the diagnostics report prints.</p>
+     */
+    static List<AllowEntry> merge(List<List<AllowEntry>> groups) {
+        Map<String, AllowEntry> byHost = new LinkedHashMap<String, AllowEntry>();
+        for (List<AllowEntry> group : groups) {
+            for (AllowEntry entry : group) {
+                AllowEntry existing = byHost.get(entry.host());
+                if (existing == null) {
+                    byHost.put(entry.host(), entry);
+                    continue;
+                }
+                if (existing.role() != entry.role()) {
+                    throw new IllegalStateException("Conflicting allow-list roles for " + entry.host());
+                }
+                List<String> mergedPaths = new ArrayList<String>(existing.pathPrefixes());
+                for (String path : entry.pathPrefixes()) {
+                    if (!mergedPaths.contains(path)) {
+                        mergedPaths.add(path);
+                    }
+                }
+                byHost.put(entry.host(), new AllowEntry(entry.host(), mergedPaths,
+                        existing.purpose(), entry.role()));
+            }
+        }
+        return new ArrayList<AllowEntry>(byHost.values());
+    }
+
+    private static List<String> paths(String... prefixes) {
+        List<String> list = new ArrayList<String>();
+        Collections.addAll(list, prefixes);
+        return Collections.unmodifiableList(list);
     }
 }

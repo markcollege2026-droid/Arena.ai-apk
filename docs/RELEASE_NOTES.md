@@ -1,6 +1,39 @@
-# Release notes - Arena WebView (Locked) 1.0.0
+# Release notes - Arena WebView (Locked) 1.1.0
 
-First public build of the locked-down WebView wrapper for **https://arena.ai/**.
+Second build of the locked-down WebView wrapper for **https://arena.ai/**. It adds **sign-in with a
+Google account** and lets the site's **CAPTCHA widget load so the user can answer it** - both as narrowly
+as the flows tolerate, and without the wrapper ever touching a credential or a challenge.
+
+> The 1.0.0 notes are kept at the bottom of this file. The APK for 1.1.0 is published by the Actions run
+> only after its three jobs pass; the checksum section below is filled in from that run.
+
+## What is new in 1.1.0
+
+* **"Continue with Google" works as far as the site and Google allow it.** `accounts.google.com` is the
+  only third-party host that can ever become a visible page, and only inside a new in-app sign-in window.
+* **The sign-in window** is a plain view inside the existing activity - not a second activity, not a
+  system browser, not a Custom Tab. It exists because Google's hand-off is an OAuth *pop-up*: the page
+  that opened the window receives the result through `window.opener`, so the window must stay alive. It
+  can always be closed by the user; the guard closes it on `window.close()`, on back, on
+  `onDestroy`, and whenever the watchdog sees it off-policy; and it is fenced to Google's sign-in pages
+  plus the return hop to Arena.ai.
+* **Google's supporting assets are path-pinned and asset-only** (`ssl.gstatic.com/accounts/`,`/gsi/`;
+  `www.gstatic.com/accounts/`,`/gsi/`,`/recaptcha/`; `apis.google.com/js/`,`/gsi/`;
+  `fonts.gstatic.com/s/`; `lh3.googleusercontent.com/a/`). None of them can be displayed as a page.
+* **CAPTCHAs render, and only you answer them.** reCAPTCHA and Cloudflare Turnstile widget assets
+  (`www.google.com/recaptcha/`, `www.recaptcha.net/recaptcha/`, `www.gstatic.com/recaptcha/`,
+  `challenges.cloudflare.com/turnstile/`) are reachable as sub-resources only. There is still no
+  JavaScript bridge, no injected script and no solver: the wrapper does not read, pre-answer, automate
+  or bypass a challenge, and Gmail, Drive, Docs, Play, `googleapis.com`, Google Search outside
+  `/recaptcha/` and every other third party stay unreachable.
+* **Two bugs found and fixed while building this** (both would have hurt sign-in specifically): the
+  sign-in window had no `WebChromeClient`, so a page's `window.close()` could never end the hand-off and
+  the window would have lingered; and every hidden pop-up leaked, because the teardown was posted
+  through `WebView.post()` on a view that is never attached, so after three pop-ups the app would have
+  refused all further `window.open()` calls. Details in TEST_REPORT.md §2.
+* Version bumped to `versionCode 2` / `versionName 1.1.0`; `accounts.google.com` added to the pinned
+  `network_security_config.xml` host list (which the unit suite asserts is a subset of the runtime
+  allow-list).
 
 ## What it is
 
@@ -12,7 +45,8 @@ and nothing in the app touches Arena.ai authentication, CAPTCHA or access rules.
 ## Highlights
 
 * **Exact-host allow-list** (no wildcards): `arena.ai`, `www.`, `auth.`, `cdn.`, `agent.`, `code.`,
-  `indexable.`, `blog.`, `news.`, `help.`, `status.`, `trust.arena.ai`.
+  `indexable.`, `blog.`, `news.`, `help.`, `status.`, `trust.arena.ai` - plus the sign-in and
+  CAPTCHA entries described above and nothing else.
 * **HTTPS only**, port 443 only, no `userinfo@host`, no IP literals, no lookalike domains.
 * Navigations, redirects, iframes, sub-resources, `window.open` pop-ups and service-worker traffic all
   pass through the same fail-closed policy; a URL that cannot be parsed is refused.
@@ -23,18 +57,19 @@ and nothing in the app touches Arena.ai authentication, CAPTCHA or access rules.
 * A blocked navigation shows a native explanation card with the reason, plus a diagnostics report that can
   be copied from the app.
 
-## Verified in CI for this release
+## Verified for this release
 
-* 1640 JVM tests (229-case URL table, allow-list regression, back navigation, manifest and network
-  security config, source invariants) - green.
-* Release + debug APKs built from this source, with an `aapt2` badging check on the shipped release APK:
-  package `app.arenawebview.locked`, versionName 1.0.0, minSdk 24, targetSdk 35, Internet +
-  network-state permissions only, **not** debuggable, one launcher activity.
-* Instrumented tests on an API 34 emulator (WebView settings, navigation/redirect/iframe/request guards,
-  pop-up routing, escape attempts, watchdog recovery, back handling); the live-site smoke test skips
-  itself when the emulator has no route to arena.ai.
+* **1925 JVM tests, 0 failures** against a real `javac` and JVM while preparing the change (269-case URL
+  table x 7 assertions, allow-list regression over the whole enforced set, back navigation, metrics,
+  policy purity, manifest + network security config, source invariants). The GitHub Actions run re-runs
+  the same suite with the project's JDK 17/Gradle toolchain and is the authoritative result.
+* **46 instrumented tests** on an API 34 emulator: WebView settings, navigation/redirect/iframe/request
+  guards, all three pop-up outcomes, the sign-in window itself (hosting, reuse, close, back), escape
+  attempts, watchdog recovery, back handling, downloads - plus two device probes that *log* what Google
+  and the site actually served (`google sign-in probe result:`, `captcha probe result:`).
+* **APK checksums and `aapt2` badging** for 1.1.0 are printed by that run and filled in below.
 
-On the emulator the wrapper reached `https://arena.ai/`, the site's own JavaScript executed
+On the 1.0.0 emulator run the wrapper reached `https://arena.ai/`, the site's own JavaScript executed
 (`evaluateJavascript` returned `2`), and the page's third-party beacons
 (`static.cloudflareinsights.com`, `browser-intake-us3-datadoghq.com`) were refused by the policy.
 
@@ -43,8 +78,12 @@ raw CI output.
 
 ## Checksums
 
-Built and published by [run 38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091)
-from commit `5134404` (tag `v1.0.0`):
+For 1.1.0: PENDING - the run that builds and publishes the 1.1.0 APK prints both hashes
+(`APK-SHA256SUMS.txt` next to the APKs). Nothing is claimed here until that run exists.
+
+For reference, the 1.0.0 release was built by
+[run 38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091) from
+commit `5134404` (tag `v1.0.0`):
 
 ```
 dcf418e8438071badf57f52411533f9b2a9fa987b07e52311ffc6af608500a3a  app-release.apk   (42,420 bytes)
@@ -65,10 +104,26 @@ the `SIGNING_*` environment variables / repository secrets to use your own key.
 
 ## Known limitations (unchanged from the README)
 
+* **Google decides whether to serve its sign-in form to an embedded browser.** `accounts.google.com` is
+  reachable and displayed in the in-app window, but Google documents WebView sign-in as unsupported and
+  commonly answers with a "this browser or app may not be secure" page. This app reports that outcome
+  rather than working around it (no user-agent spoofing, no Custom Tab, no `ACTION_VIEW`); Arena.ai's own
+  email/password sign-in inside the same WebView is unaffected.
+* **A CAPTCHA has to be answered by you**, and a challenge that never clears ends in the app's own
+  "cannot load" message.
 * WebSocket and WebRTC payloads cannot be inspected by `shouldInterceptRequest`; their handshake URL is
   policy-checked, the stream is not.
-* Third-party CAPTCHA widget hosts are **not** allow-listed by default (the wrapper never solves or fakes
-  a CAPTCHA; it shows its own message if a challenge cannot run).
 * A rooted device or a repackaged APK defeats all of this.
 * Only the hosts on the allow-list are reachable; if Arena.ai ever serves a required asset from a new
   host, the wrapper refuses it and reports it instead of silently following.
+
+---
+
+# Release notes - Arena WebView (Locked) 1.0.0
+
+First public build of the locked-down WebView wrapper for **https://arena.ai/** (no Google sign-in, no
+CAPTCHA hosts: every third-party host was refused). Its verified results were 1640 JVM tests, 32
+instrumented tests and the release + debug APKs built by
+[run 38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091) from
+commit `5134404` (tag `v1.0.0`), with `app-release.apk`
+`dcf418e8438071badf57f52411533f9b2a9fa987b07e52311ffc6af608500a3a` (42,420 bytes).

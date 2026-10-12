@@ -246,34 +246,91 @@ public final class PolicyCases {
     }
 
     /**
-     * Cases that are only meaningful when the opt-in third-party widget entries are enabled. Kept
-     * separate so the default build's strictness is asserted by {@link #all()}.
+     * The Google sign-in hand-off and the CAPTCHA widgets, which this build enables (see
+     * {@link ArenaAllowlist#ENABLE_GOOGLE_SIGN_IN} and {@link ArenaAllowlist#ENABLE_CAPTCHA_WIDGETS}).
+     *
+     * <p>These rows assert both halves of the trade-off: the URLs the real flow needs are allowed, and
+     * everything next to them stays refused - Google's other products, look-alike hosts, the asset hosts
+     * as pages, and any path outside a pinned widget path.</p>
      */
-    public static List<Case> withCapabilityEntriesEnabled() {
+    public static List<Case> withGoogleSignInAndCaptchaEnabled() {
         List<Case> cases = new ArrayList<Case>();
-        sub(cases, "reCAPTCHA widget script (enabled)", "https://www.google.com/recaptcha/api.js", true, null);
-        sub(cases, "reCAPTCHA widget frame (enabled)", "https://www.google.com/recaptcha/enterprise/anchor",
+
+        // --- the sign-in flow itself --------------------------------------------------------------
+        doc(cases, "Google OAuth authorize URL", "https://accounts.google.com/o/oauth2/v2/auth"
+                + "?client_id=123.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Farena.ai%2F"
+                + "&response_type=code&scope=openid+email", true, null);
+        doc(cases, "Google sign-in identifier page",
+                "https://accounts.google.com/signin/v2/identifier?flowName=GlifWebSignIn", true, null);
+        doc(cases, "Google account chooser", "https://accounts.google.com/AccountChooser?continue=x", true, null);
+        doc(cases, "Google consent page", "https://accounts.google.com/signin/oauth/consent?authuser=0",
                 true, null);
-        sub(cases, "reCAPTCHA static asset (enabled)", "https://www.gstatic.com/recaptcha/releases/x/r.js",
+        doc(cases, "Google client-side identity library",
+                "https://accounts.google.com/gsi/client?hl=en", true, null);
+        doc(cases, "sign-in page may read its own assets",
+                "https://accounts.google.com/static/accounts/xxx.css", true, null);
+        sub(cases, "sign-in asset host (gstatic)",
+                "https://ssl.gstatic.com/accounts/o/xxx.gif", true, null);
+        sub(cases, "sign-in asset host (www.gstatic)",
+                "https://www.gstatic.com/accounts/gsi/x.js", true, null);
+        sub(cases, "Google identity script", "https://apis.google.com/js/client.js", true, null);
+        sub(cases, "account avatar", "https://lh3.googleusercontent.com/a/ACg8ocABC=s96-c", true, null);
+        sub(cases, "Google font file", "https://fonts.gstatic.com/s/roboto/v30/x.woff2", true, null);
+
+        // --- what stays out ----------------------------------------------------------------------
+        doc(cases, "look-alike of Google's account host",
+                "https://accounts.google.com.evil.example/signin", false, BlockReason.HOST_NOT_ALLOWED);
+        doc(cases, "Google account host on a look-alike TLD", "https://accounts.google.co/signin",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        doc(cases, "userinfo trick against Google's host",
+                "https://accounts.google.com@evil.example/signin", false, BlockReason.USERINFO_PRESENT);
+        sub(cases, "Google search stays unreachable", "https://www.google.com/search?q=hello",
+                false, BlockReason.PATH_NOT_ALLOWED);
+        both(cases, "Gmail stays unreachable", "https://mail.google.com/mail/u/0/",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        both(cases, "Google Drive stays unreachable", "https://drive.google.com/drive/my-drive",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        both(cases, "Google Play stays unreachable", "https://play.google.com/store/apps",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        both(cases, "the account host is reachable at every path the flow uses",
+                "https://accounts.google.com/v3/accounts/whatever", true, null);
+        both(cases, "a Google account page is still HTTPS only", "http://accounts.google.com/signin",
+                false, BlockReason.SCHEME_NOT_HTTPS);
+        sub(cases, "asset host outside its pinned paths",
+                "https://apis.google.com/console/whatever", false, BlockReason.PATH_NOT_ALLOWED);
+        sub(cases, "avatar host outside its pinned path",
+                "https://lh3.googleusercontent.com/not-an-avatar", false, BlockReason.PATH_NOT_ALLOWED);
+
+        // --- asset hosts can never become the page ------------------------------------------------
+        doc(cases, "gstatic sign-in asset may never become the page",
+                "https://ssl.gstatic.com/accounts/o/x.gif", false, BlockReason.DOCUMENT_NOT_ALLOWED);
+        doc(cases, "apis.google.com may never become the page",
+                "https://apis.google.com/js/client.js", false, BlockReason.DOCUMENT_NOT_ALLOWED);
+        doc(cases, "avatar host may never become the page",
+                "https://lh3.googleusercontent.com/a/x", false, BlockReason.DOCUMENT_NOT_ALLOWED);
+
+        // --- CAPTCHA widgets ----------------------------------------------------------------------
+        sub(cases, "reCAPTCHA widget script", "https://www.google.com/recaptcha/api.js", true, null);
+        sub(cases, "reCAPTCHA widget frame", "https://www.google.com/recaptcha/enterprise/anchor",
                 true, null);
-        sub(cases, "Turnstile widget (enabled)", "https://challenges.cloudflare.com/turnstile/v0/api.js",
+        sub(cases, "reCAPTCHA static asset", "https://www.gstatic.com/recaptcha/releases/x/r.js",
                 true, null);
-        sub(cases, "Google search stays blocked even with widgets on", "https://www.google.com/search?q=x",
-                false, BlockReason.PATH_NOT_ALLOWED);
-        sub(cases, "Google accounts stay blocked even with widgets on", "https://www.google.com/accounts/x",
-                false, BlockReason.PATH_NOT_ALLOWED);
-        sub(cases, "other Google host stays blocked", "https://translate.google.com/", false,
-                BlockReason.HOST_NOT_ALLOWED);
-        sub(cases, "path traversal out of the widget path", "https://www.gstatic.com/recaptcha/../translate/x",
-                false, BlockReason.PATH_NOT_ALLOWED);
+        sub(cases, "reCAPTCHA on the alternate domain",
+                "https://www.recaptcha.net/recaptcha/api.js", true, null);
+        sub(cases, "Turnstile widget", "https://challenges.cloudflare.com/turnstile/v0/api.js",
+                true, null);
+        sub(cases, "path traversal out of a widget path",
+                "https://www.gstatic.com/recaptcha/../translate/x", false, BlockReason.PATH_NOT_ALLOWED);
         sub(cases, "percent-encoded path escape", "https://www.gstatic.com/recaptcha%2f..%2fx", false,
                 BlockReason.PATH_NOT_ALLOWED);
-        sub(cases, "Cloudflare host outside the widget path", "https://challenges.cloudflare.com/cdn-cgi/x",
-                false, BlockReason.PATH_NOT_ALLOWED);
-        doc(cases, "widget host may never become the page", "https://challenges.cloudflare.com/turnstile/v0/api.js",
-                false, BlockReason.DOCUMENT_NOT_ALLOWED);
-        doc(cases, "reCAPTCHA script may never become the page", "https://www.google.com/recaptcha/api.js",
-                false, BlockReason.DOCUMENT_NOT_ALLOWED);
+        sub(cases, "Cloudflare host outside the widget path",
+                "https://challenges.cloudflare.com/cdn-cgi/x", false, BlockReason.PATH_NOT_ALLOWED);
+        doc(cases, "Turnstile host may never become the page",
+                "https://challenges.cloudflare.com/turnstile/v0/api.js", false,
+                BlockReason.DOCUMENT_NOT_ALLOWED);
+        doc(cases, "reCAPTCHA script may never become the page",
+                "https://www.google.com/recaptcha/api.js", false, BlockReason.DOCUMENT_NOT_ALLOWED);
+
         return cases;
     }
 

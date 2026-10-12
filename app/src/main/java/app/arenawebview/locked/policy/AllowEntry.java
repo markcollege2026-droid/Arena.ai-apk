@@ -14,9 +14,29 @@ import java.util.Locale;
  * {@code аrena.ai} with a Cyrillic 'а', {@code arena.ai.} with a trailing dot) impossible to reach:
  * they simply are not equal to {@code arena.ai}.</p>
  *
+ * <p>Entries carry a {@link Role}: Arena.ai's own pages, third-party asset hosts that may only ever
+ * serve sub-resources, and the sign-in hosts that a login hand-off needs to display. Only
+ * {@code PRODUCT} and {@code SIGN_IN} entries can become the visible document, and the runner-up
+ * window (used for pop-up based sign-in) additionally refuses anything that is not one of those two
+ * roles.</p>
+ *
  * <p>Immutable and Android-free so that it can be unit tested on a plain JVM.</p>
  */
 public final class AllowEntry {
+
+    /**
+     * What an entry is for. The role never widens the set of hosts - it only records which capability
+     * the entry exists for, so the app can tell an ordinary page navigation apart from the step of a
+     * sign-in hand-off (see {@link #isSignIn()}).
+     */
+    public enum Role {
+        /** Arena.ai itself: pages of the product. */
+        PRODUCT,
+        /** A third-party asset host: sub-resources only, never a page. */
+        ASSET,
+        /** A third-party page that is part of a sign-in hand-off (Google's OAuth pages). */
+        SIGN_IN
+    }
 
     /** Exact canonical host, lower case, ASCII. */
     private final String host;
@@ -27,11 +47,8 @@ public final class AllowEntry {
     /** Human readable justification, shown in the diagnostics report. */
     private final String purpose;
 
-    /**
-     * True when this entry may only serve sub-resources. Used for the opt-in third-party widget hosts so
-     * that, even with those enabled, a page can never be navigated to them.
-     */
-    private final boolean resourceOnly;
+    /** What this entry is for; see {@link Role}. */
+    private final Role role;
 
     /**
      * @param host         exact canonical host (lower case ASCII, e.g. {@code arena.ai})
@@ -39,13 +56,13 @@ public final class AllowEntry {
      * @param purpose      why this host is reachable, for auditability
      */
     public AllowEntry(String host, List<String> pathPrefixes, String purpose) {
-        this(host, pathPrefixes, purpose, false);
+        this(host, pathPrefixes, purpose, Role.PRODUCT);
     }
 
     /**
-     * @param resourceOnly when true the entry can only serve sub-resources; a navigation to it is refused
+     * @param role what the entry is for; {@link Role#ASSET} means "sub-resources only, never a page"
      */
-    public AllowEntry(String host, List<String> pathPrefixes, String purpose, boolean resourceOnly) {
+    public AllowEntry(String host, List<String> pathPrefixes, String purpose, Role role) {
         String canonical = UrlPolicy.canonicalizeHost(host);
         if (canonical == null) {
             // A malformed allow-list entry is a programming error and must fail loudly at start-up
@@ -68,7 +85,7 @@ public final class AllowEntry {
         this.host = canonical;
         this.pathPrefixes = Collections.unmodifiableList(cleaned);
         this.purpose = purpose == null ? "" : purpose;
-        this.resourceOnly = resourceOnly;
+        this.role = role == null ? Role.PRODUCT : role;
     }
 
     /** Convenience factory for an "any path on this host" entry. */
@@ -76,14 +93,37 @@ public final class AllowEntry {
         return new AllowEntry(host, Collections.<String>emptyList(), purpose);
     }
 
-    /** Convenience factory for a path-scoped, resource-only entry (third-party widget hosts). */
+    /** Convenience factory for a path-scoped, resource-only entry (third-party asset/widget hosts). */
     public static AllowEntry resourceOnly(String host, List<String> pathPrefixes, String purpose) {
-        return new AllowEntry(host, pathPrefixes, purpose, true);
+        return new AllowEntry(host, pathPrefixes, purpose, Role.ASSET);
+    }
+
+    /**
+     * Convenience factory for a third-party <em>page</em> that exists only as one step of a sign-in
+     * hand-off. Such a host may become the visible document, which is exactly what the OAuth flow
+     * needs, and it is the only class of entry that may do so outside the {@link Role#PRODUCT} hosts.
+     */
+    public static AllowEntry signIn(String host, List<String> pathPrefixes, String purpose) {
+        return new AllowEntry(host, pathPrefixes, purpose, Role.SIGN_IN);
     }
 
     /** True when this host may serve sub-resources but must never become the visible document. */
     public boolean isResourceOnly() {
-        return resourceOnly;
+        return role == Role.ASSET;
+    }
+
+    /** True when this entry is a step of a sign-in hand-off rather than an Arena.ai page. */
+    public boolean isSignIn() {
+        return role == Role.SIGN_IN;
+    }
+
+    /** True when this entry is part of the product itself. */
+    public boolean isProduct() {
+        return role == Role.PRODUCT;
+    }
+
+    public Role role() {
+        return role;
     }
 
     public String host() {
@@ -159,8 +199,10 @@ public final class AllowEntry {
     /** Renders the entry in a stable, lower-case form for reporting. */
     public String describe() {
         StringBuilder sb = new StringBuilder(host.toLowerCase(Locale.ROOT));
-        if (resourceOnly) {
+        if (role == Role.ASSET) {
             sb.append(" [resource-only]");
+        } else if (role == Role.SIGN_IN) {
+            sb.append(" [sign-in page]");
         }
         if (isPathRestricted()) {
             sb.append(" paths=").append(pathPrefixes);

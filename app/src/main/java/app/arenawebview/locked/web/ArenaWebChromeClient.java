@@ -54,6 +54,14 @@ public class ArenaWebChromeClient extends WebChromeClient {
 
     // ---------------------------------------------------------------------------------------------
     // Pop-ups
+    //
+    // Two kinds of window come out of onCreateWindow:
+    //   * an ordinary window.open()/target=_blank, whose client re-routes the URL into the single
+    //     visible WebView and destroys the window (nothing new can appear), and
+    //   * a sign-in hand-off to Google's account host, which is shown as an in-app window instead -
+    //     the OAuth pop-up flow needs its window to stay alive for window.opener/postMessage.
+    // The window starts hidden in both cases; only the sign-in case is ever attached to a view
+    // hierarchy, and only by the activity (PopupRouterClient asks the host to show it).
     // ---------------------------------------------------------------------------------------------
 
     @Override
@@ -118,6 +126,9 @@ public class ArenaWebChromeClient extends WebChromeClient {
         synchronized (livePopups) {
             livePopups.remove(window);
         }
+        // The host tears down any in-app sign-in window that was showing this WebView (Google's page
+        // calls window.close() when the hand-off is done), then the WebView itself is destroyed.
+        host.onPopupClosed(window);
         try {
             window.setWebViewClient(new android.webkit.WebViewClient());
             window.destroy();
