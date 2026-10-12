@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Arena WebView (Locked)</string>
+    <string name="start_url">https://arena.ai/</string>
+    <string name="overlay_title_blocked">Blocked by this app</string>
+    <string name="overlay_title_error">Could not load arena.ai</string>
+    <string name="overlay_reload">Back to arena.ai</string>
+    <string name="overlay_copy">Copy diagnostics</string>
+    <string name="overlay_dismiss">Dismiss</string>
+    <string name="overlay_footer">This app only opens arena.ai and the first-party Arena services listed in the README. Nothing is sent anywhere else.</string>
+</resources>
