@@ -196,9 +196,12 @@ jobs:
             adb logcat -c || true
             ./gradlew --no-daemon :app:connectedDebugAndroidTest --stacktrace || echo "instrumented tests reported failures" > /tmp/instrumented-failed
             adb logcat -d -s ArenaWebViewLocked:V > docs/evidence/device-logcat.txt || true
-            # Screenshot of the app as evidence that the real website is rendered inside the wrapper.
+            # Screenshot of the app as evidence of what it renders in this environment. The connected
+            # task uninstalls the APKs when it finishes, so install the debug build again first.
+            adb install -r -t app/build/outputs/apk/debug/app-debug.apk || true
             adb shell am start -n app.arenawebview.locked/app.arenawebview.locked.MainActivity || true
             sleep 25
+            adb logcat -d -s ArenaWebViewLocked:V > docs/evidence/device-logcat.txt || true
             adb exec-out screencap -p > docs/evidence/app-screenshot.png || true
             adb shell dumpsys activity activities > docs/evidence/device-activities.txt || true
             ls -la docs/evidence || true

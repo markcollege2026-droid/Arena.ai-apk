@@ -1,323 +1,166 @@
-# Arena WebView (Locked)
+# Arena.ai APK - locked-down WebView wrapper
 
-A single-purpose Android app: **one WebView, pointed at <https://arena.ai/>, with every route out of it
-closed.**
+An Android app that shows **https://arena.ai/** in a single WebView and refuses to go anywhere else.
+It is a wrapper around the real, live site - it does not reimplement, replace or restyle the Arena.ai
+UI, and it does not touch Arena.ai's authentication, CAPTCHA or access rules.
 
-It is a *wrapper for the real website* - the app does not reimplement, restyle, proxy or scrape anything.
-It loads arena.ai in a WebView and spends its entire security budget on making sure that WebView cannot
-leave arena.ai, cannot reach any other domain, and cannot hand control to another application.
+**Installable APK:** [Releases page](https://github.com/markcollege2026-droid/Arena.ai-apk/releases) -
+or download the `arena-webview-apk` artifact from the [Actions runs](https://github.com/markcollege2026-droid/Arena.ai-apk/actions).
 
-> **Not affiliated with Arena AI.** "arena.ai" and its content belong to Arena AI. This is an independent
-> client that renders the public site in a WebView. It does not bypass authentication, paywalls, CAPTCHAs
-> or any access restriction, it does not modify the site, and it does not collect anything.
+**Package:** `app.arenawebview.locked` · **versionName:** 1.0.0 · **minSdk:** 24 (Android 7.0) ·
+**targetSdk:** 35 · **permissions:** `INTERNET`, `ACCESS_NETWORK_STATE` only.
 
----
-
-## Table of contents
-
-1. [Download and install](#download-and-install)
-2. [Build it yourself](#build-it-yourself)
-3. [What the app enforces](#what-the-app-enforces)
-4. [The allow-list](#the-allow-list)
-5. [How it works (architecture)](#how-it-works-architecture)
-6. [Configuration](#configuration)
-7. [Verification: what is tested and how](#verification-what-is-tested-and-how)
-8. [Known limitations](#known-limitations)
-9. [Repository layout](#repository-layout)
+> Read [SECURITY.md](SECURITY.md) for the threat model and an honest list of what a WebView wrapper
+> *cannot* police. Read [TEST_REPORT.md](TEST_REPORT.md) for what has actually been executed and
+> measured, and [docs/EVIDENCE.md](docs/EVIDENCE.md) for the raw CI output.
 
 ---
 
-## Download and install
+## 1. Build it yourself
 
-Grab `app-release.apk` from the [latest release](../../releases/latest), then:
+Prerequisites: JDK 17 and the Android SDK (platform 35, build-tools 35.x). Nothing else - the Gradle
+wrapper (8.11) is committed, so no local Gradle installation is needed.
 
 ```bash
-adb install -r app-release.apk
+git clone https://github.com/markcollege2026-droid/Arena.ai-apk.git
+cd Arena.ai-apk
+
+./gradlew :app:assembleDebug          # debug APK
+./gradlew :app:assembleRelease        # release APK, signed with the committed demo key
+./gradlew :app:testDebugUnitTest      # JVM unit tests (security core)
+./gradlew :app:connectedDebugAndroidTest   # on-device tests, needs a device or emulator
 ```
 
-Or copy the APK to the device and tap it (you will need to allow "install unknown apps" for that source -
-that prompt comes from Android, not from this app).
+Outputs:
 
-* Minimum: Android 7.0 (API 24). The WebView (Chromium) is updated through the Play Store, so even old
-  devices get a current engine.
-* Permissions requested: `INTERNET` and `ACCESS_NETWORK_STATE`. Nothing else - no storage, camera,
-  location, contacts or phone state.
-* The release APK is signed with the demo key committed in [`keystore/`](keystore/README.md), so builds
-  from this repository can upgrade each other.
+* `app/build/outputs/apk/debug/app-debug.apk`
+* `app/build/outputs/apk/release/app-release.apk`
 
-## Build it yourself
+Install over USB with `adb install -r app/build/outputs/apk/release/app-release.apk`.
 
-Requirements:
+### Signing
 
-* JDK 17
-* Android SDK with platform 35 and build-tools 35.x (`ANDROID_HOME`/`ANDROID_SDK_ROOT` set, or a
-  `local.properties` with `sdk.dir=...`)
-* Nothing else: the project has no runtime dependencies and uses the Gradle wrapper that is committed here
+The release build is signed with the demo keystore committed at `keystore/arena-webview-demo.p12`
+(store/key password `arenawebview`, alias `arenawebview`). **That key is public - it is fine for
+sideloading and for CI verification, and it is not a production signing key.** See
+[keystore/README.md](keystore/README.md) for the keytool recipe, and set `SIGNING_KEYSTORE_PATH`,
+`SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS`, `SIGNING_KEY_PASSWORD`, `SIGNING_STORE_TYPE` (or the
+`SIGNING_KEYSTORE_BASE64` secret in CI) to sign with your own key.
 
-```bash
-./gradlew :app:assembleRelease          # app/build/outputs/apk/release/app-release.apk
-./gradlew :app:assembleDebug            # debug build with WebView debugging enabled
-./gradlew :app:testDebugUnitTest        # the whole security core, on the JVM, in seconds
-./gradlew :app:connectedDebugAndroidTest  # the guards on a connected device/emulator
-```
+### Continuous integration
 
-The APK is also built automatically by GitHub Actions on every push
-([`.github/workflows/android.yml`](.github/workflows/android.yml)): unit tests, then the APK (plus a
-verification pass over the built artifact), then the instrumented tests on an emulator. Pushing a `v*`
-tag publishes a release with the APK and its checksum attached.
+`.github/workflows/android.yml` runs four jobs on every push and pull request:
 
-To sign with your own key instead of the demo key, see [`keystore/README.md`](keystore/README.md).
-
----
-
-## What the app enforces
-
-| # | Threat | Enforcement | Where |
-| --- | --- | --- | --- |
-| 1 | Navigation to any other domain | every navigation is matched against an **exact-host** allow-list; refused navigations are cancelled | `UrlPolicy` + `ArenaWebViewClient.shouldOverrideUrlLoading` |
-| 2 | Redirects (server-side, meta-refresh, JS) to another domain | every network request - including each hop of a redirect chain - is checked; a refused one is answered with an in-process empty `403`, so it never reaches the network | `ArenaWebViewClient.shouldInterceptRequest` |
-| 3 | Requests from scripts, images, XHR/fetch, service workers | same request-level check, plus a dedicated `ServiceWorkerClient` for the service-worker transport | `WebViewHardening.installServiceWorkerGuard` |
-| 4 | iframes to other domains | sub-frame navigations and requests go through the same checks | `ArenaWebViewClient` (both callbacks) |
-| 5 | Pop-ups / `window.open()` / `target="_blank"` | `onCreateWindow` is intercepted: a WebView is handed to Chromium that is **never attached to any view hierarchy**; its URL is re-validated, an approved URL is loaded in the single visible WebView, anything else is dropped. Dialog-style windows are refused outright | `ArenaWebChromeClient.onCreateWindow`, `PopupRouterClient` |
-| 6 | Custom schemes and deep links (`intent:`, `market:`, `tel:`, `mailto:`, `whatsapp:`, ...) | refused by the scheme rule, and again by the fact that `startActivity` is overridden to refuse | `UrlPolicy`, `MainActivity.startActivity` |
-| 7 | `javascript:` URLs (including newline-split smuggling) | refused by the scheme rule (tab/newline handling mirrors the WHATWG algorithm Chromium uses, so both parsers see the same string) | `UrlPolicy` |
-| 8 | Look-alike domains (`arena-ai.com`, `arena.ai.evil.example`, `аrena.ai`, `xn--…`, `arena.ai.`) | non-ASCII, percent-escapes, backslashes and userinfo are rejected before parsing; the host is then compared **byte-for-byte** with the allow-list - there is no wildcard or suffix matching anywhere in the code | `UrlPolicy.canonicalizeHost` |
-| 9 | Local file/asset access (`file://`, `content://`) | both refused by the scheme rule and disabled in the WebView (`allowFileAccess`, `allowContentAccess`, `allowFileAccessFromFileURLs`, `allowUniversalAccessFromFileURLs` all off) | `UrlPolicy`, `WebViewHardening` |
-| 10 | Downloads | every download is refused in the `DownloadListener`; the app never touches `DownloadManager` | `WebViewHardening.BlockingDownloadListener` |
-| 11 | File pickers / camera / microphone / location | the file chooser is intercepted and completed with "no file" (never launches DocumentsUI), media-capture and geolocation requests are denied, and the app declares no camera/location permissions at all | `ArenaWebChromeClient` |
-| 12 | TLS errors | `onReceivedSslError` always cancels - there is no code path that calls `proceed()` (asserted by a test) | `ArenaWebViewClient` |
-| 13 | Cleartext HTTP | refused three times over: by the URL policy, by `MIXED_CONTENT_NEVER_ALLOW`, and by a network security config that trusts only system CAs (so a user-installed proxy CA cannot intercept either) | `UrlPolicy`, `WebViewHardening`, `res/xml/network_security_config.xml` |
-| 14 | Another app being opened (browser, share sheet, store, download UI) | `startActivity`, `startActivityForResult` and `startActivities` are overridden and refuse everything; nothing in the project ever calls them | `MainActivity` |
-| 15 | Deep links / being steered from outside | the app has no deep-link handling: incoming intents are recorded and ignored, and the exported surface is a single launcher activity | `MainActivity.recordIncomingIntent`, `AndroidManifest.xml` |
-| 16 | JavaScript bridge attacks | there is no JavaScript bridge in the project at all (no `addJavascriptInterface`); a test fails the build if one is ever added | `SourceInvariantsTest` |
-| 17 | Anything that still slips through | final-URL verification on `onPageStarted`/`onPageFinished`/`doUpdateVisitedHistory` **and** a 1-second watchdog that re-checks the visible URL; a URL that is not approved is replaced by the start page or covered by a native overlay | `ArenaWebViewClient`, `MainActivity.tickWatchdog` |
-| 18 | Back navigation becoming an escape route | back only moves through history entries that still pass the policy, otherwise it reloads the start page; it never starts another activity, and it takes two presses to close the app | `BackNavigator`, `MainActivity.handleBackPressed` |
-
-Every refusal is a *fail-closed* refusal: when a URL cannot be positively proven to be
-`https://<allow-listed host>`, it is refused and the reason is recorded (visible in the in-app
-diagnostics report, in logcat under the tag `ArenaWebViewLocked`, and in the tests).
-
----
-
-## The allow-list
-
-The reachable set of hosts is defined in code
-([`ArenaAllowlist.java`](app/src/main/java/app/arenawebview/locked/policy/ArenaAllowlist.java)) and pinned
-by a regression test, so it cannot change silently.
-
-### Start page
-
-```
-https://arena.ai/
-```
-
-### First-party hosts (exact match, no wildcards)
-
-| Host | Why |
+| Job | What it does |
 | --- | --- |
-| `arena.ai` | the product itself (canonical host) |
-| `www.arena.ai` | canonical alternate host for the same site |
-| `auth.arena.ai` | first-party authentication service (sign-in/session API) |
-| `cdn.arena.ai` | first-party static asset CDN |
-| `agent.arena.ai` | Agent Mode first-party endpoint |
-| `code.arena.ai` | code/artifact first-party endpoint |
-| `indexable.arena.ai` | pre-rendered content used by the site |
-| `blog.arena.ai`, `news.arena.ai` | first-party content pages linked from the site |
-| `help.arena.ai` | first-party help centre |
-| `status.arena.ai`, `trust.arena.ai` | first-party status and trust pages |
-
-These are all DNS names inside Arena AI's own zone (`arena.ai`), i.e. the *same first party* the user
-intends to visit - not third parties. They are listed explicitly, one by one, because the app has no
-concept of a wildcard.
-
-### Deliberately **not** reachable
-
-* `mail.`, `webmail.`, `cpanel.`, `autodiscover.`, `mta-sts.`, `openpgpkey.`, `exchange.` - mail and
-  hosting infrastructure that the product does not need.
-* `okta.arena.ai` and `www.okta.arena.ai` - SSO identity provider. Signing in through a third-party
-  identity provider is out of scope for a locked-down client (and would be a redirect chain across two
-  domains).
-* `api.preview.`, `api-k8s.preview.`, `portal.api.preview.`, `portal-k8s.api.preview.` - non-production
-  hosts.
-* `lmarena.ai` - legacy domain; it only redirects to `arena.ai`.
-* Everything else on the internet, including every look-alike domain (`arena-ai.com`, `arenaai.com`,
-  `arenas.ai`, `arena.ai.evil.example`, `xn--rena-4qa.ai`, Cyrillic-homograph spellings, ...).
-
-### Third-party capability entries - **off by default**
-
-Two site capabilities physically load assets from hosts that are not Arena AI:
-
-* the **reCAPTCHA** widget: `www.google.com/recaptcha/*`, `www.gstatic.com/recaptcha/*`
-* the **Cloudflare Turnstile** challenge widget: `challenges.cloudflare.com/turnstile/*`
-
-They are prepared in the code but **disabled** (`ENABLE_THIRD_PARTY_CAPABILITY_ENTRIES = false`), because
-enabling them means the app can talk to two additional organisations, and because a CAPTCHA/bot check is
-precisely the kind of browser verification this app must not interfere with or try to work around. If a
-deployment of arena.ai starts showing a widget that cannot be avoided, flip that one constant, rebuild,
-and the build log plus `dependencies`-free diff will show exactly what changed. Even then the entries are
-path-scoped (`/recaptcha/`, `/turnstile/` - `www.google.com/search` stays unreachable) and *resource-only*:
-they can serve a script or a frame, but they can never become the visible page.
+| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the 1640-test JVM suite |
+| `build-apk` | Builds debug + release APKs, runs `aapt2 dump badging` assertions, writes `APK-SHA256SUMS.txt` |
+| `instrumented-tests` | Boots an API 34 emulator and runs `connectedDebugAndroidTest` (the live-site smoke test is skipped if the runner has no network path to arena.ai) |
+| `release` | On a `v*` tag: publishes a GitHub Release with both APKs, checksums, badging output and release notes |
 
 ---
 
-## How it works (architecture)
+## 2. What the wrapper enforces
+
+Every URL that the WebView is about to load - top-level navigation, redirect, iframe, sub-resource,
+`fetch`/XHR, pop-up or service worker request - passes through one pure-Java policy engine
+(`policy/UrlPolicy.java`) that is compiled into the APK. There is no JSON, asset or remote
+configuration that could be swapped out at runtime.
+
+| # | Guarantee | Mechanism |
+| --- | --- | --- |
+| 1 | Only `https://` loads | Scheme check; `http://`, `file:`, `content:`, `intent:`, `market:`, `javascript:`, `socket:`, `ws(s):` and every other scheme are refused |
+| 2 | Only exact, listed hosts | Exact string match against `ArenaAllowlist` - no suffix or wildcard logic, so `arena.ai.evil.com`, `arena-ai.com`, `arena.ai.` and Unicode/punycode lookalikes never match |
+| 3 | Ports pinned to 443 | Any other explicit port is refused |
+| 4 | No credentials in URLs | `userinfo@host` is refused (the classic `https://arena.ai@evil.com` confusion) |
+| 5 | No IP-literal hosts | IPv4/hex/decimal literals and non-ASCII hosts are refused |
+| 6 | Redirects re-validated | `shouldOverrideUrlLoading` and `shouldInterceptRequest` see every hop; the final URL is re-checked in the history and page-finished callbacks |
+| 7 | Sub-requests are checked too | `shouldInterceptRequest` refuses off-policy requests with an in-process empty response (nothing leaves the device) |
+| 8 | Service worker traffic is checked | `ServiceWorkerController` client applies the same policy |
+| 9 | Pop-ups are captured, never shown | `window.open`/`target="_blank"` is intercepted; an allowed URL is routed into the single visible WebView, anything else is refused |
+| 10 | No second window, ever | The hidden pop-up WebView is never attached to a view hierarchy and is destroyed immediately |
+| 11 | External apps are unreachable | `startActivity`/`startActivityForResult`/`startActivities` are overridden to refuse, incoming intents are only logged, and off-policy custom schemes never reach the platform |
+| 12 | Downloads never start | A `DownloadListener` refuses and reports; the platform `DownloadManager` is never used |
+| 13 | File uploads / media capture / geolocation are denied | `WebChromeClient` refusals |
+| 14 | TLS failures are fatal | `onReceivedSslError` always cancels, client-certificate requests and HTTP auth are cancelled |
+| 15 | Android Safe Browsing is on | `setSafeBrowsingEnabled(true)`; a hit is treated as a blocked navigation |
+| 16 | Back stays inside the app | Back handles the app's own fullscreen video and overlay first, then walks WebView history **only to entries that still pass policy**; leaving the app requires a double press |
+| 17 | The app cannot be steered from outside | One exported launcher activity, no deep links, no services/receivers/providers |
+| 18 | Runtime re-verification | A 1-second watchdog re-checks `WebView.getUrl()` and rewinds to the start page if it is ever off-policy; a lost renderer process tears the WebView down |
+
+Failures are fail-closed: a URL that cannot be parsed, a null/empty URL, or a policy error results in
+a refusal plus an in-app explanation, never in a load.
+
+### What is allow-listed
+
+`arena.ai` and `www.arena.ai` are the product. The remaining first-party hosts are the ones Arena.ai
+operates for its own assets and links: `auth.`, `cdn.`, `agent.`, `code.`, `indexable.`, `blog.`,
+`news.`, `help.`, `status.` and `trust.arena.ai`. Mail, SSO (`okta.`), e-mail security (`mta-sts.`)
+and non-production preview hosts (`*.preview.arena.ai`) are deliberately **not** listed.
+
+**Third-party capability entries (off by default).** Some deployments of the real site load a
+reCAPTCHA or Cloudflare Turnstile widget from `www.google.com`, `www.gstatic.com` or
+`challenges.cloudflare.com`. Those hosts are *not* allow-listed in the shipped build. The wrapper
+does not solve, bypass or fake CAPTCHAs - if the site presents a challenge whose scripts cannot load,
+the app shows its own message instead. Turning the widgets on is a deliberate one-line, reviewable
+change (`ArenaAllowlist.ENABLE_THIRD_PARTY_CAPABILITY_ENTRIES`, see SECURITY.md §5) that adds
+path-scoped asset loads only - never whole domains, never navigable pages.
+
+### Non-goals
+
+* No bypassing Arena.ai authentication, CAPTCHA or access restrictions.
+* No reimplementation or restyling of the Arena.ai interface - the real site is loaded.
+* No JavaScript bridge, no `addJavascriptInterface`, no debug WebView.
+
+---
+
+## 3. Known limitations (honest list)
+
+1. **WebSocket / WebRTC payloads are not inspected.** `shouldInterceptRequest` cannot see them; the
+   handshake URL is still policy-checked, but isolated-WebView traffic bypasses the request layer.
+   See SECURITY.md §4.
+2. **A hostile page in the allow-list would be trusted.** The guarantee is "only these hosts", not
+   "only well-behaved content".
+3. **A rooted/compromised device, or a modified APK, defeats all of this.** The wrapper protects
+   against a hostile page, not against a hostile device owner.
+4. **The demo signing key is public.** It proves the build chain; it is not a production key.
+5. **CAPTCHA widgets are off by default**, so a deployment that requires them needs the deliberate
+   opt-in and its own re-test.
+6. **Redirects are re-validated per hop, not pre-enumerated.** If Arena.ai ever redirects to a host
+   that is not on the list, the wrapper refuses and reports instead of following it.
+7. **The policy is Android-free unit-tested, but the WebView wiring is tested on an emulator.** Where
+   a claim depends on device behaviour it is marked as such in TEST_REPORT.md.
+
+---
+
+## 4. Repository layout
 
 ```
-        ┌──────────────────────────── MainActivity (the only activity) ────────────────────────────┐
-        │  single WebView  +  native StatusOverlay (covers the WebView when a page is refused)      │
-        │                                                                                           │
-        │  loadVerifiedDestination(url)   ← the only call site of WebView.loadUrl()                 │
-        │        │                                                                                  │
-        │        └─► UrlPolicy.evaluateNavigation(url)   ──► allow / refuse(reason)                 │
-        │                                                                                           │
-        │  startActivity*() overridden → refuse + count          back → BackNavigator.decide()      │
-        │  watchdog (1 s) → re-verify the visible URL            incoming intents → ignored          │
-        └───────────────────────────────────────────────┬───────────────────────────────────────────┘
-                                                        │
-                 ┌──────────────────────────────────────┴───────────────────────────────────────┐
-                 │ ArenaWebViewClient                                     ArenaWebChromeClient   │
-                 │ · shouldOverrideUrlLoading  (navigations, redirects)   · onCreateWindow      │
-                 │ · shouldInterceptRequest    (every request/hop)        · onShowFileChooser   │
-                 │ · onPageStarted/Finished, doUpdateVisitedHistory       · onPermissionRequest │
-                 │ · onReceivedSslError → cancel                          · geolocation → deny   │
-                 │ · onSafeBrowsingHit → back to safety                   · fullscreen video    │
-                 │ · onRenderProcessGone → recover                        · JS dialogs (in-app) │
-                 └──────────────────────────────────────┬───────────────────────────────────────┘
-                                                        │
-                             ┌──────────────────────────┴──────────────────────────┐
-                             │ UrlPolicy (pure Java, no Android, no java.net.URI)  │
-                             │  canonicalise → exact host match → path scope       │
-                             │  every branch that cannot prove safety → BLOCK      │
-                             └─────────────────────────────────────────────────────┘
-```
-
-Design decisions worth calling out:
-
-* **The policy layer is pure Java with no Android imports.** It can (and does) run as a plain JVM unit
-  test with hundreds of hostile inputs on every build. Deliberately, it does not use `java.net.URI`,
-  because those rules differ from Chromium's for exactly the inputs that matter (backslashes, tabs and
-  newlines, collapsed slashes, percent-escapes in the host).
-* **No wildcards anywhere.** An entry matches only if the canonical host is byte-for-byte equal to it.
-  That single rule removes an entire class of bypasses.
-* **Fail closed, always.** There is no "unknown → allow" path. Unparseable, ambiguous or unfixable input
-  produces a refusal with a reason.
-* **The WebView still does the browser work.** Allowed requests return `null` from
-  `shouldInterceptRequest`, so cookies, HTTP/2, range requests, streaming media and the HTTP cache all
-  behave exactly as in a browser. Nothing is proxied, buffered, rewritten or MITM'd.
-* **The app never "helps" the site.** No injected scripts, no modified headers other than dropping the
-  `wv` token from the user agent (so the site serves the same code it serves to Chrome rather than its
-  WebView fallback), no DOM manipulation.
-
----
-
-## Configuration
-
-| Constant | File | Default | Effect |
-| --- | --- | --- | --- |
-| `PRIMARY_URL` | `policy/ArenaAllowlist.java` | `https://arena.ai/` | the only page the app opens on its own |
-| `firstPartyEntries()` | `policy/ArenaAllowlist.java` | 12 hosts | exact-match allow-list |
-| `ENABLE_THIRD_PARTY_CAPABILITY_ENTRIES` | `policy/ArenaAllowlist.java` | `false` | enables the path-scoped reCAPTCHA/Turnstile entries |
-| signing | environment / `app/build.gradle` | demo key | `SIGNING_KEYSTORE_PATH`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS`, `SIGNING_KEY_PASSWORD`, `SIGNING_STORE_TYPE` |
-| `WATCHDOG_INTERVAL_MS` | `MainActivity.java` | `1000` | how often the visible URL is re-verified |
-| `EXIT_BACK_WINDOW_MS` | `MainActivity.java` | `2500` | window for the second back press that closes the app |
-
-Everything else that could be a "setting" is intentionally in code: there is no remote config, no
-preference screen and no asset file that could be swapped at runtime, and the whole reachable set is one
-reviewable diff.
-
----
-
-## Verification: what is tested and how
-
-Two suites, both run in CI on every push:
-
-* **JVM unit tests** (`./gradlew :app:testDebugUnitTest`) - the security core:
-  * ~190 URL cases, each asserting allow/refuse *and* the exact refusal reason (scheme smuggling, userinfo
-    tricks, IP literals, ports, look-alike domains, punycode, homoglyphs, percent-escapes in the host,
-    backslashes, control characters, inert-scheme rules, path-scoped widget entries, ...)
-  * the allow-list itself (exact contents, no wildcards, excluded hosts stay excluded)
-  * back-navigation decisions, diagnostics counters, source-level invariants
-    (no JS bridge, no `proceed()`, exactly one `loadUrl` call site, no `startActivity` call sites, ...)
-  * the manifest and the network security config (permissions, exported surface, cleartext off,
-    system-only trust anchors, no debug overrides)
-* **Instrumented tests on an emulator** (`./gradlew :app:connectedDebugAndroidTest`) - the real WebView:
-  * WebView settings read back from the app's own WebView
-  * the guard clients driven with synthesized requests: allowed/refused navigations, POST preservation,
-    iframes, redirects, custom schemes, cleartext, look-alikes, null URLs
-  * pop-ups (refused, re-routed, never attached to a view hierarchy, dialog windows refused)
-  * downloads and file chooser refusals, geolocation refusal
-  * escape attempts: `startActivity` refused with an `ActivityMonitor` asserting nothing was launched
-  * a deliberate bypass (`WebView.loadUrl("https://evil.example/")` behind the guard's back) - the
-    third-party page must never become visible
-  * back navigation: never launches anything, never exposes another site, eventually closes the app
-  * the installed app's surface: one exported activity, no services/receivers/providers, two permissions
-  * a live smoke test against the real arena.ai (tolerant of an offline emulator, but never tolerant of
-    ending up on another host)
-
-The results of the most recent CI run - including the artifact verification (`aapt2 dump badging`) and a
-screenshot from the emulator - are summarised in [`TEST_REPORT.md`](TEST_REPORT.md).
-
-What is *not* claimed: see the honest list in [Known limitations](#known-limitations) below and in
-[`SECURITY.md`](SECURITY.md).
-
----
-
-## Known limitations
-
-These are deliberate, documented trade-offs - not oversights:
-
-1. **WebSockets, WebRTC and other transports that bypass `shouldInterceptRequest`.** Android's WebView
-   API has no hook for them, and injecting a CSP into a page you do not control is not possible from a
-   wrapper. Consequence: page JavaScript could open a WebSocket to a third-party host. This is *not* an
-   escape route (nothing becomes visible, no navigation happens, no other app is opened, nothing is
-   rendered), but it is not intercepted, and the app says so instead of pretending otherwise. Closing it
-   properly would mean running an allow-listing HTTP CONNECT proxy inside the app and pointing the WebView
-   at it via `ProxyController` - a deliberate non-goal for this version.
-2. **Downloads are refused entirely**, including files Arena AI might otherwise offer. Saving files would
-   need either the platform download UI (another app) or a hand-written HTTP client outside the WebView
-   policy; both were rejected. Generated content is still viewable in the page.
-3. **File uploads are refused** (the picker is another app). No camera/gallery input.
-4. **Third-party sign-in (Google/Apple/Okta) is refused**, because it is a cross-domain redirect chain -
-   exactly what a locked-down wrapper must not allow. Email/password sign-in against
-   `auth.arena.ai` works, and third-party cookies are enabled so the session keeps working.
-5. **CAPTCHA widgets are blocked by default** (see the third-party capability entries above). If Arena AI
-   presents a challenge, the app shows its in-app message instead of silently contacting Google.
-6. **Anti-fingerprinting / privacy is not the goal.** Cookies, storage and the normal WebView profile are
-   kept so the site works as intended; the app is a lockdown, not a privacy browser.
-7. **No deep links.** Links like `https://arena.ai/...` opened from other apps will not open this app
-   (deliberate: no exported deep-link surface).
-8. **Media capture (mic/camera) is denied.** No permissions are declared for them at all.
-9. **The demo signing key is public** (see `keystore/README.md`): use your own key for any real
-   distribution.
-
----
-
-## Repository layout
-
-```
-.github/workflows/android.yml                    CI: unit tests → APK + artifact verification → emulator tests → release
-app/build.gradle                                 app config; signing via env vars with demo-key fallback
-app/src/main/AndroidManifest.xml                 one exported activity, two permissions, cleartext off
-app/src/main/res/xml/network_security_config.xml HTTPS-only, system trust anchors only, no debug overrides
 app/src/main/java/app/arenawebview/locked/
-    MainActivity.java                            the only activity; single funnel for loads; escape prevention; watchdog
-    policy/                                      pure Java security core (no Android imports, no java.net.URI)
-        UrlPolicy.java                           the URL parser/validator - every decision, fail closed
-        ArenaAllowlist.java                      the reachable set, in code, with a reason per entry
-        AllowEntry.java / PolicyConfig.java      exact-host matching with optional path scoping and resource-only entries
-        BackNavigator.java                       in-app-only back navigation decisions
-        PolicyMetrics.java                       bounded, local diagnostics counters + recent refusals
-    web/
-        ArenaWebViewClient.java                   navigations, requests, redirect hops, TLS, final-URL verification
-        ArenaWebChromeClient.java                 pop-ups, dialogs, permissions, file chooser, fullscreen video
-        PopupRouterClient.java                    routes verified pop-up targets into the single WebView
-        WebViewHardening.java                     WebView settings, cookies, service-worker guard, download refusal
-        GuardHost.java / BaseGuardHost.java       the seam between the guards and the activity (also the test seam)
-    ui/StatusOverlay.java                         native "blocked / could not load" surface (never a web page)
-app/src/test/…                                    JVM tests: URL case table, allow-list, manifest, source invariants
-app/src/androidTest/…                             on-device tests: settings, guards, pop-ups, escapes, back, live smoke
-keystore/                                         demo signing key + how to use your own
-docs/RELEASE_NOTES.md                             release notes attached to GitHub releases
-TEST_REPORT.md                                    test report with the actual CI evidence
-SECURITY.md                                       threat model, guarantees, non-goals, disclosure
+  MainActivity.java            single activity: WebView lifecycle, watchdog, back handling
+  policy/                      pure Java, no Android imports - the security core
+    UrlPolicy.java             the validator (schema, host, port, path, fail-closed)
+    ArenaAllowlist.java        the one and only allow-list
+    AllowEntry.java            exact host + optional raw-path prefixes
+    PolicyConfig.java          allow-list + entry points
+    BlockReason.java           machine-readable reasons
+    PolicyResult.java          immutable decision
+    PolicyMetrics.java         counters + last blocked URLs (diagnostics)
+    BackNavigator.java         where "back" may go
+  web/                         Android side
+    WebViewHardening.java      hardened settings, cookies, ServiceWorker guard
+    ArenaWebViewClient.java    navigation/request interception
+    ArenaWebChromeClient.java  pop-ups, dialogs, permissions, fullscreen
+    PopupRouterClient.java     hidden pop-up window: routed or destroyed
+    GuardHost.java             the callbacks the activity implements
+    BaseGuardHost.java         no-op base for tests
+    BlockedResponses.java      the in-process 403 response
+  ui/StatusOverlay.java        native "blocked / error" card
+app/src/test/                  JVM tests: 229-case URL table + invariants
+app/src/androidTest/           emulator tests (guards, escapes, live smoke)
+.github/workflows/android.yml  CI: tests, APK build + verification, release
+docs/                          evidence, release notes
+keystore/                      demo signing key + guidance
+SECURITY.md                    threat model, guarantees, limitations
+TEST_REPORT.md                 brief test report (what ran, what it proved)
 ```

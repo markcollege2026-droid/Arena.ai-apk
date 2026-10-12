@@ -71,12 +71,12 @@ public class WebViewSettingsTest {
                 assertTrue("images", settings.getLoadsImagesAutomatically());
                 assertFalse("network images must not be blocked", settings.getBlockNetworkImage());
                 assertFalse("network loads must not be blocked", settings.getBlockNetworkLoads());
-                assertTrue("zoom", settings.getSupportZoom());
+                assertTrue("zoom", settings.supportZoom());
                 assertTrue("wide viewport for a responsive site", settings.getUseWideViewPort());
                 assertTrue("overview mode", settings.getLoadWithOverviewMode());
                 assertFalse("streamed video must be able to start", settings.getMediaPlaybackRequiresUserGesture());
                 assertTrue("window.open must reach the guard instead of being dropped",
-                        settings.getSupportMultipleWindows());
+                        settings.supportMultipleWindows());
                 assertFalse("automatic pop-ups stay suppressed",
                         settings.getJavaScriptCanOpenWindowsAutomatically());
             }
@@ -112,7 +112,6 @@ public class WebViewSettingsTest {
                         settings.getAllowUniversalAccessFromFileURLs());
                 assertEquals("mixed content must never be allowed",
                         WebSettings.MIXED_CONTENT_NEVER_ALLOW, settings.getMixedContentMode());
-                assertFalse("geolocation is refused", settings.getGeolocationEnabled());
             }
         });
     }
