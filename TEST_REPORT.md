@@ -75,7 +75,8 @@ breaks that flow, so 1.1.0 has one carefully bounded exception.
 | `GoogleSignInLiveTest` | **2** | on a device: the app reaches `accounts.google.com`, the page that arrives is served by an allowed host, and the result is **logged** (which page Google actually served) rather than asserted; a second probe logs which CAPTCHA the real site references |
 | `SourceInvariantsTest` | 11 | the code-level fences listed in §1 - the sign-in support cannot introduce a Custom Tab, an `ACTION_VIEW`, a chooser or an extra activity without failing the build |
 
-Two implementation bugs were found while writing those tests and fixed:
+Two implementation bugs were found while writing those tests, plus one test-thread mistake found by
+the first CI run, and all three were fixed:
 
 * **The sign-in window could never close itself.** Chromium delivers `window.close()` only to a
   `WebChromeClient`; the pop-up WebView had none, so Google's returning page could not end the hand-off
@@ -91,14 +92,40 @@ Two implementation bugs were found while writing those tests and fixed:
   navigation callback is not safe). `finishedWindowsDoNotPileUpAgainstTheOpenWindowLimit` fails if this
   regresses.
 
-## 3. The live site and Google, on a device
+## 3. The live site, Google and the CAPTCHA, on a device (measured)
 
 The `instrumented-tests` job runs on an API 34 emulator with a working network path, and
-`GoogleSignInLiveTest` records what really happened rather than asserting a hoped-for outcome. The
-device log for the 1.1.0 run is reproduced in [docs/EVIDENCE.md](docs/EVIDENCE.md); the two lines that
-matter are the ones starting `google sign-in probe:` and `captcha probe result:`. If Google answers
-embedded WebViews with its "this browser or app may not be secure" page, the log says so, and the README
-states that as a limitation instead of this report claiming sign-in works end to end.
+`GoogleSignInLiveTest` records what really happened rather than asserting a hoped-for outcome. On the
+first 1.1.0 run (45 of 46 tests passed; the one failure was a test-thread mistake described below), the
+device log said:
+
+```
+captcha probe result: "https://www.gstatic.com/recaptcha/releases/nY0xPItgwtktOA7U0o-VsaLz/recaptcha__en.js
+  ;; https://www.google.com/recaptcha/enterprise.js?render=6LeTGMcsAAAAALuIlkVwIxaAuZA8VledA6d3Nnb0
+  ;; https://static.cloudflareinsights.com/beacon.min.js/... ;; window.grecaptcha present"
+
+google sign-in probe: url=https://accounts.google.com/v3/signin/identifier?flowEntry=ServiceLogin&flowName=GlifWebSignIn...
+google sign-in probe result: "SIGNIN_FORM_PRESENT | NO_REJECTION_TEXT | title=Sign in - Google Accounts | len=221
+  | text=Loading Sign in Use your Google Account Email or phone Forgot email? Not your computer? ..."
+```
+
+Read literally, on that emulator:
+
+* the site really does use **Google reCAPTCHA (Enterprise)** - the exact hosts this build allows - and
+  `window.grecaptcha` was present in the page, i.e. the widget script **loaded through the policy** rather
+  than being refused. The Cloudflare insights beacon next to it was still refused, which is the policy
+  behaving as designed;
+* Google served its **real sign-in page** to this WebView (`title=Sign in - Google Accounts`, the
+  "Email or phone" identifier field present, no "this browser or app may not be secure" page).
+
+Neither of those is a claim that a human completed a sign-in: that needs a real account and a challenge
+answer, which no automated test may do. It is evidence that the mechanism, the allow-list and the hosts
+are wired to reality - and, per the README, Google may still refuse at a later step.
+
+The one failure of that run was in the test, not the app: `popupToASignInHostIsKeptAndShownInApp`
+checked a WebView's state from the instrumentation thread, which Android forbids
+(`A WebView method was called on thread 'Instr: androidx.test.runner.AndroidJUnitRunner'`). The check now
+happens on the main thread inside the same `runOnMainSync` block.
 
 ## 4. What is *not* covered by an automated test
 

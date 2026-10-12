@@ -117,6 +117,7 @@ public class PopupBlockingTest {
     public void popupToASignInHostIsKeptAndShownInApp() {
         final RecordingGuardHost host = new RecordingGuardHost(POLICY);
         final WebView[] holder = new WebView[1];
+        final boolean[] stillUsable = new boolean[1];
         InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
@@ -133,6 +134,10 @@ public class PopupBlockingTest {
                 // The hand-off continues inside the same window: the next Google page stays there.
                 assertFalse(client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.navigation(
                         "https://accounts.google.com/signin/v2/identifier")));
+
+                // Touching a WebView is only legal on the thread that created it, so the liveness check
+                // has to happen here - asserting it from the test thread is itself an error.
+                stillUsable[0] = popup.getSettings() != null;
             }
         });
 
@@ -142,9 +147,9 @@ public class PopupBlockingTest {
         assertNull("a sign-in window must not be routed into the main WebView", host.lastLoadedUrl);
         assertEquals("nothing may be counted as a routed popup", 0,
                 host.metrics().count(PolicyMetrics.Counter.ROUTED_POPUPS));
-        // The window is still alive (a destroyed WebView cannot report its URL), which is what the
-        // OAuth flow needs to post its result back to the opening page.
-        assertNotNull(holder[0].getSettings());
+        assertTrue("the window must still be alive (a destroyed WebView cannot report its URL), "
+                + "which is what the OAuth flow needs to post its result back to the opening page",
+                stillUsable[0]);
     }
 
     /**

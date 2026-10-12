@@ -70,7 +70,11 @@ and nothing in the app touches Arena.ai authentication, CAPTCHA or access rules.
 * **46 instrumented tests** on an API 34 emulator: WebView settings, navigation/redirect/iframe/request
   guards, all three pop-up outcomes, the sign-in window itself (hosting, reuse, close, back), escape
   attempts, watchdog recovery, back handling, downloads - plus two device probes that *log* what Google
-  and the site actually served (`google sign-in probe result:`, `captcha probe result:`).
+  and the site actually served. On the first 1.1.0 run 45 passed; the one failure was a test reading a
+  WebView's state from the wrong thread (a bug in the test, fixed). The probes reported that arena.ai
+  uses **Google reCAPTCHA Enterprise** on exactly the hosts this build allows (`window.grecaptcha`
+  present) and that Google **served its real sign-in identifier page to this WebView** - evidence that
+  the mechanism and the allow-list are wired to reality, not a claim that a human completed a sign-in.
 * **APK checksums and `aapt2` badging** for 1.1.0 are printed by that run and filled in below.
 
 On the 1.0.0 emulator run the wrapper reached `https://arena.ai/`, the site's own JavaScript executed

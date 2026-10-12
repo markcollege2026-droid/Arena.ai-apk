@@ -146,14 +146,16 @@ sends for the user to answer. The two switches are `ArenaAllowlist.ENABLE_GOOGLE
 3. **A rooted/compromised device, or a modified APK, defeats all of this.** The wrapper protects
    against a hostile page, not against a hostile device owner.
 4. **The demo signing key is public.** It proves the build chain; it is not a production key.
-5. **Google decides whether it will serve its sign-in form to an embedded browser at all.**
-   `accounts.google.com` is reachable and is displayed in the in-app window, but Google documents
-   sign-in inside a WebView as unsupported and its servers commonly answer embedded browsers with a
-   "this browser or app may not be secure" page. That is Google's server-side policy; this wrapper does
-   not, and will not, work around it (no user-agent spoofing, no `ACTION_VIEW`, no Custom Tab - those
-   would either defeat the restriction or break "never leaves the app"). Arena.ai's own email/password
-   sign-in inside the same WebView is unaffected. TEST_REPORT.md reports what the device actually saw
-   instead of asserting the outcome.
+5. **Google's sign-in form did load in this WebView - but Google, not this app, decides whether it
+   keeps doing so.** On the API 34 emulator used by CI, `accounts.google.com` served its real sign-in
+   page (`title=Sign in - Google Accounts`, the "Email or phone" identifier field present, no
+   "this browser or app may not be secure" page) - see TEST_REPORT.md §3 and
+   [docs/EVIDENCE.md](docs/EVIDENCE.md) §6 for the raw log line. Google nonetheless documents sign-in
+   inside a WebView as unsupported and may refuse at a later step (for example after the identifier is
+   submitted), which is a server-side decision this wrapper does not, and will not, work around: no
+   user-agent spoofing, no `ACTION_VIEW`, no Custom Tab. So: the hand-off mechanism, the window and the
+   allow-list are verified; a *completed* sign-in is not claimed. Arena.ai's own sign-in inside the same
+   WebView is unaffected either way.
 6. **A CAPTCHA has to be answered by you.** The widget loads and renders (reCAPTCHA or Cloudflare
    Turnstile), but the wrapper will not interact with it, so a challenge that never clears - or a site
    that demands an unavailable third-party host - ends in the app's own "cannot load" message.

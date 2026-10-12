@@ -13,7 +13,7 @@ paraphrased.
 | [38288257746](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288257746) | `4252a89` | after fixing those | unit + APK green; emulator: 32 tests, 1 failure (test built a `Message` with no target handler) |
 | [38288999321](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38288999321) | `b34907f` | after that fix | unit-tests, build-apk and instrumented-tests all green |
 | [38289760091](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38289760091) | `5134404`, tag `v1.0.0` | the 1.0.0 release run | **all four jobs green, including `Publish release`** - this is the run whose APKs are on the [release](https://github.com/markcollege2026-droid/Arena.ai-apk/releases/tag/v1.0.0) |
-| PENDING | this branch | the 1.1.0 run (Google sign-in + in-app CAPTCHA) | filled in from the run that produces the 1.1.0 APK - see below |
+| [38297414026](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38297414026) | `cb94dee` | first 1.1.0 run (Google sign-in + in-app CAPTCHA) | `unit-tests` and `build-apk` green; `instrumented-tests` 45/46 - one test called a WebView method off the main thread (a bug in the test, fixed) |
 
 Environment for the green run: `ubuntu-24.04` (image `20261004.327.1`), Temurin JDK `17.0.20+1`,
 Gradle 8.11 via the committed wrapper, AGP 8.7.3, compileSdk/targetSdk 35, minSdk 24, emulator
@@ -259,42 +259,75 @@ Everything in this section is filled in from the GitHub Actions run that builds 
 same verbatim style as above. Until the run exists, the entries below say PENDING; nothing here is a
 prediction.
 
-## 4. Job `unit-tests` (1.1.0) - PENDING
-
-Expected shape:
+## 4. Job `unit-tests` (1.1.0) - passed
 
 ```
+> Task :app:compileDebugUnitTestJavaWithJavac
 > Task :app:testDebugUnitTest
+
 BUILD SUCCESSFUL
-<tests completed>, 0 failed
+1930 tests completed, 0 failed
 ```
 
-## 5. Job `build-apk` (1.1.0) - PENDING
+The same job failed on the first attempt with the `aapt2` resource error quoted in §0; the fix is in the
+commit that re-ran it.
 
-`aapt2 dump badging` must show `versionCode='2' versionName='1.1.0'`, `minSdkVersion:'24'`,
-`targetSdkVersion:'35'`, the two network permissions, no `application-debuggable`, and exactly one
-launcher entry; the run prints the SHA-256 of both APKs, which is the checksum that matters for the
-artifact it produced.
+## 5. Job `build-apk` (1.1.0) - passed
 
-## 6. Job `instrumented-tests` (1.1.0) - PENDING
+Badging and checksums are printed by the run that produces the 1.1.0 APK; the section below is filled in
+from the run that publishes it.
 
-Expected shape (46 tests):
+## 6. Job `instrumented-tests` (1.1.0) - 45/46, one test-thread bug (fixed)
 
 ```
 > Task :app:connectedDebugAndroidTest
-Starting 46 tests on emulator-5554
-Tests on emulator-5554 passed
+Starting 46 tests on emulator-5554 - 14
+emulator-5554 - 14 Tests 6/46 completed. (0 skipped) (0 failed)
+emulator-5554 - 14 Tests 10/46 completed. (0 skipped) (0 failed)
+emulator-5554 - 14 Tests 13/46 completed. (0 skipped) (0 failed)
+emulator-5554 - 14 Tests 15/46 completed. (0 skipped) (0 failed)
+app.arenawebview.locked.web.PopupBlockingTest > popupToASignInHostIsKeptAndShownInApp[emulator-5554 - 14] FAILED
+    java.lang.RuntimeException: java.lang.Throwable: A WebView method was called on thread
+    'Instr: androidx.test.runner.AndroidJUnitRunner'. All WebView methods must be called on the same thread.
+        at android.webkit.WebView.checkThread(WebView.java:2626)
+Tests on emulator-5554 - 14 failed: There was 1 failure(s).
+Finished 46 tests on emulator-5554 - 14
 ```
 
-The two probes that only exist on a device are the interesting lines:
+The failure is in the test, not the app: it read `WebView.getSettings()` from the instrumentation thread
+after the guarded code had already run correctly. The assertion now runs on the main thread inside the
+same `runOnMainSync` block, and it checks the same property (the hand-off window is still alive).
+
+### What the two device probes reported (verbatim)
 
 ```
-I ArenaWebViewLocked: google sign-in probe: url=...
-I ArenaWebViewLocked: google sign-in probe result: SIGNIN_FORM_PRESENT | ... | title=... | len=...
-I ArenaWebViewLocked: captcha probe result: ...
+I ArenaWebViewLocked: captcha probe: url=https://arena.ai/
+I ArenaWebViewLocked: captcha probe result: "https://www.gstatic.com/recaptcha/releases/nY0xPItgwtktOA7U0o-VsaLz/recaptcha__en.js
+  ;; https://www.google.com/recaptcha/enterprise.js?render=6LeTGMcsAAAAALuIlkVwIxaAuZA8VledA6d3Nnb0
+  ;; https://static.cloudflareinsights.com/beacon.min.js/v4bc70e2c01a94c73b74392e4234840661791215815920
+  ;; https://www.google.com/recaptcha/enterprise.js?render=6LeTGMcsAAAAALuIlkVwIxaAuZA8VledA6d3Nnb0
+  ;; window.grecaptcha present"
+I ArenaWebViewLocked: google sign-in probe: url=https://accounts.google.com/v3/signin/identifier?flowEntry=ServiceLogin&flowName=GlifWebSignIn&dsh=S-1708191369:1791833368283910
+I ArenaWebViewLocked: google sign-in probe result: "SIGNIN_FORM_PRESENT | NO_REJECTION_TEXT | title=Sign in - Google Accounts | len=221
+  | text=Loading Sign in Use your Google Account Email or phone Forgot email? Not your computer? Use Guest mode to sign in privately.
+  Learn more about using Guest mode Next Create account English (United State"
 ```
 
-Read them literally: whichever of `SIGNIN_FORM_PRESENT` / `NO_FORM` and
-`BROWSER_REJECTED` / `NO_REJECTION_TEXT` appears, plus the page title, is what Google actually served to
-the emulator's WebView. The same block is echoed into the job summary by the workflow step
-"== google sign-in and CAPTCHA probes ==".
+Two facts, and no more than two: the CAPTCHA this site uses is Google reCAPTCHA Enterprise on exactly the
+hosts this build allows (and its script loaded - `window.grecaptcha present` - while the Cloudflare
+insights beacon beside it was still refused), and Google served its real identifier page
+(`SIGNIN_FORM_PRESENT`, `title=Sign in - Google Accounts`) to this WebView with no "browser or app may not
+be secure" page. Neither line says a human completed a sign-in.
+
+### The rest of the device evidence from the same run
+
+```
+I ArenaWebViewLocked: live smoke test: url after load = https://arena.ai/
+I ArenaWebViewLocked: evaluateJavascript returned: 2
+W ArenaWebViewLocked: watchdog found a non-approved URL, resetting: BLOCK reason=HOST_NOT_ALLOWED host=evil.example
+W ArenaWebViewLocked: recovery (onPageStarted:HOST_NOT_ALLOWED) from https://evil.example/definitely-not-allowed
+W ArenaWebViewLocked: refused internal load (test): BLOCK reason=HOST_NOT_ALLOWED host=evil.example
+D ArenaWebViewLocked: console: Access to script at 'https://static.cloudflareinsights.com/beacon.min.js/...'
+   from origin 'https://arena.ai' has been blocked by CORS policy
+I ArenaWebViewLocked: load (test:google-signin): accounts.google.com
+```
