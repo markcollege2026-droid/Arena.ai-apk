@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import org.junit.After;
 import org.junit.Before;
@@ -139,10 +140,23 @@ public class EgressProxyTest {
     }
 
     @Test
-    public void listensOnLoopbackOnlyOnAnEphemeralPort() {
+    public void listensOnIpv4LoopbackOnlyOnAnEphemeralPort() throws Exception {
         assertTrue(proxy.port() > 0);
         assertTrue(proxy.isRunning());
         assertEquals(0, proxy.openTunnelCount());
+        assertEquals("127.0.0.1", EgressProxy.LOOPBACK_HOST);
+        assertEquals("127.0.0.1", EgressProxy.loopbackAddress().getHostAddress());
+        // The address Chromium is given is the one that answers (open() uses the literal 127.0.0.1).
+        try (Socket client = open()) {
+            assertTrue(client.isConnected());
+        }
+        // ... and the IPv6 loopback does not: the listener is not dual-stack / wildcard.
+        try (Socket v6 = new Socket()) {
+            v6.connect(new InetSocketAddress(InetAddress.getByName("::1"), proxy.port()), 1000);
+            fail("the proxy must not be reachable on ::1");
+        } catch (IOException expected) {
+            // refused (or no IPv6 loopback on this machine): either way not reachable
+        }
     }
 
     @Test
@@ -360,7 +374,7 @@ public class EgressProxyTest {
         proxy.close();
         assertFalse(proxy.isRunning());
         try (Socket client = new Socket()) {
-            client.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 1000);
+            client.connect(new InetSocketAddress(EgressProxy.loopbackAddress(), port), 1000);
             // Some platforms accept and reset, others refuse outright; either way no tunnel is served.
             client.setSoTimeout(1000);
             client.getOutputStream().write("CONNECT arena.ai:443 HTTP/1.1\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
@@ -392,7 +406,8 @@ public class EgressProxyTest {
 
     private Socket open() throws IOException {
         Socket s = new Socket();
-        s.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), proxy.port()), 2000);
+        // Exactly what Chromium is told: the IPv4 loopback literal, never the platform default.
+        s.connect(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), proxy.port()), 2000);
         s.setSoTimeout(5000);
         return s;
     }

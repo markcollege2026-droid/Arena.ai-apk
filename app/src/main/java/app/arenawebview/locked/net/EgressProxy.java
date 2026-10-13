@@ -68,6 +68,14 @@ public final class EgressProxy implements Closeable {
     /** The default port for HTTPS, and the only one a tunnel may ever be opened to. */
     public static final int HTTPS_PORT = 443;
 
+    /**
+     * The address the proxy listens on, and the one the WebView is told to connect to. Spelled out as
+     * IPv4 on purpose: on Android {@code InetAddress.getLoopbackAddress()} is {@code ::1}, and a proxy
+     * rule of {@code 127.0.0.1:port} would then point at a port nobody listens on - every page would fail
+     * with {@code ERR_PROXY_CONNECTION_FAILED} (fail-closed, but useless).
+     */
+    public static final String LOOPBACK_HOST = "127.0.0.1";
+
     private static final int MAX_HEAD_BYTES = 16 * 1024;
     private static final int HANDSHAKE_TIMEOUT_MS = 15_000;
     private static final int UPSTREAM_CONNECT_TIMEOUT_MS = 20_000;
@@ -136,7 +144,7 @@ public final class EgressProxy implements Closeable {
         try {
             server.setReuseAddress(true);
             // Loopback only, port 0 = let the kernel pick one. Never 0.0.0.0.
-            server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 64);
+            server.bind(new InetSocketAddress(loopbackAddress(), 0), 64);
         } catch (IOException e) {
             closeQuietly(server);
             throw e;
@@ -144,7 +152,12 @@ public final class EgressProxy implements Closeable {
         return new EgressProxy(policy, metrics, dialer, listener, server);
     }
 
-    /** The loopback port Chromium must be pointed at. */
+    /** {@link #LOOPBACK_HOST} as an address, built without any lookup. */
+    public static InetAddress loopbackAddress() throws IOException {
+        return InetAddress.getByAddress(LOOPBACK_HOST, new byte[] {127, 0, 0, 1});
+    }
+
+    /** The loopback port Chromium must be pointed at (on {@link #LOOPBACK_HOST}). */
     public int port() {
         return server.getLocalPort();
     }

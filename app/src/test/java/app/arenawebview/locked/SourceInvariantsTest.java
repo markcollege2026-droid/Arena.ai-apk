@@ -156,13 +156,16 @@ public class SourceInvariantsTest {
         assertTrue(main.contains("EgressGuard.install(policy, metrics"));
 
         assertTrue(guard.contains("WebViewFeature.PROXY_OVERRIDE"));
-        assertTrue("one rule for every scheme", guard.contains("addProxyRule(\"127.0.0.1:\""));
+        assertTrue("one rule for every scheme, to the address the proxy really listens on",
+                guard.contains("addProxyRule(EgressProxy.LOOPBACK_HOST + \":\" + running.port())"));
         assertFalse("a direct fallback would let a failed proxy become no proxy", guard.contains("addDirect("));
         assertFalse(guard.contains("addBypassRule("));
         assertTrue("loopback and link-local destinations go through the guard too", guard.contains(".removeImplicitRules()"));
         assertFalse("the override is for the process lifetime", guard.contains("clearProxyOverride("));
 
-        assertTrue("loopback only", proxy.contains("InetAddress.getLoopbackAddress()"));
+        assertTrue("IPv4 loopback, spelled out (Android's getLoopbackAddress() is ::1)",
+                proxy.contains("new byte[] {127, 0, 0, 1}") && proxy.contains("LOOPBACK_HOST = \"127.0.0.1\""));
+        assertFalse("never the platform's idea of loopback", proxy.contains("getLoopbackAddress()"));
         assertFalse(proxy.contains("0.0.0.0"));
         assertTrue("only CONNECT is served", proxy.contains("\"CONNECT\".equals(parts[0])"));
         assertTrue("the policy decides every tunnel", proxy.contains("policy.evaluateTunnel(request.host, request.port)"));

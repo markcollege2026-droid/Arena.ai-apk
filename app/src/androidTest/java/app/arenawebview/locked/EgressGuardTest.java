@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 
 import android.util.Log;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
@@ -75,65 +76,83 @@ public class EgressGuardTest {
             assertTrue(PolicyMetrics.get().count(PolicyMetrics.Counter.BLOCKED_TUNNELS) >= blockedBefore + 5);
             assertTrue("the refused tunnel must appear in the diagnostics report",
                     recordedTunnelTo("evil.example"));
+            Log.i(TAG, "egress tunnels opened so far: "
+                    + PolicyMetrics.get().count(PolicyMetrics.Counter.TUNNELS_OPENED));
         }
     }
 
     /**
      * A WebSocket opened by page script is the case the request hooks cannot see. With the guard in
      * place it still ends up as a {@code CONNECT} on the proxy, where the policy refuses it.
+     *
+     * <p>The script runs in a plain helper WebView showing an inline document, so the outcome depends
+     * only on Chromium's network stack being routed - not on the live site's Content-Security-Policy,
+     * which may well forbid the socket before any connection is attempted.</p>
      */
     @Test
     public void aWebSocketToAForeignHostIsRefusedByTheProxy() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             awaitReady();
-            long blockedBefore = PolicyMetrics.get().count(PolicyMetrics.Counter.BLOCKED_TUNNELS);
+            final int before = tunnelRefusalsTo("evil.example");
+            final AtomicReference<WebView> helper = new AtomicReference<WebView>();
+            final AtomicReference<String> started = new AtomicReference<String>();
+            final CountDownLatch scriptDone = new CountDownLatch(1);
+            scenario.onActivity(activity -> {
+                WebView view = new WebView(activity);
+                view.getSettings().setJavaScriptEnabled(true);
+                view.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public void onPageFinished(WebView v, String url) {
+                        if (scriptDone.getCount() == 0) {
+                            return;
+                        }
+                        v.evaluateJavascript("""
+                                (function () {
+                                  try {
+                                    var ws = new WebSocket('wss://evil.example/socket');
+                                    ws.onerror = function () {};
+                                    ws.onclose = function () {};
+                                    return 'started';
+                                  } catch (e) {
+                                    return 'threw:' + e;
+                                  }
+                                })()
+                                """, value -> {
+                            started.set(value);
+                            scriptDone.countDown();
+                        });
+                    }
+                });
+                helper.set(view);
+                view.loadDataWithBaseURL(null, "<!doctype html><html><body>websocket probe</body></html>",
+                        "text/html", "utf-8", null);
+            });
+            assertTrue("probe page did not load", scriptDone.await(15, TimeUnit.SECONDS));
+            Log.i(TAG, "websocket probe: " + started.get());
+            assertEquals("\"started\"", started.get());
 
-            String started = evaluate(scenario, """
-                    (function () {
-                      try {
-                        var ws = new WebSocket('wss://evil.example/socket');
-                        ws.onerror = function () {};
-                        ws.onclose = function () {};
-                        return 'started';
-                      } catch (e) {
-                        return 'threw:' + e;
-                      }
-                    })()
-                    """);
-            Log.i(TAG, "websocket probe: " + started);
-            assertEquals("\"started\"", started);
-
-            long deadline = System.currentTimeMillis() + PROBE_TIMEOUT_MS;
-            while (System.currentTimeMillis() < deadline && !recordedTunnelTo("evil.example")) {
-                Thread.sleep(250);
-            }
-            assertTrue("the WebSocket must have reached the proxy and been refused there",
-                    recordedTunnelTo("evil.example"));
-            assertTrue(PolicyMetrics.get().count(PolicyMetrics.Counter.BLOCKED_TUNNELS) > blockedBefore);
+            awaitTunnelRefusal("evil.example", before);
             Log.i(TAG, "websocket probe diagnostics:\n" + PolicyMetrics.get().snapshot());
+            scenario.onActivity(activity -> helper.get().destroy());
         }
     }
 
-    /** The override is for every WebView in the process, so a second WebView is guarded too. */
+    /**
+     * The override is for every WebView in the process, so a plain WebView with no client of its own is
+     * guarded too: its navigation to a foreign host is stopped at the proxy, nothing is resolved or sent.
+     */
     @Test
     public void everyWebViewInTheProcessIsRouted() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             awaitReady();
-            long blockedBefore = PolicyMetrics.get().count(PolicyMetrics.Counter.BLOCKED_TUNNELS);
+            final int before = tunnelRefusalsTo("evil.example");
             final AtomicReference<WebView> extra = new AtomicReference<WebView>();
             scenario.onActivity(activity -> {
                 WebView view = new WebView(activity);
-                view.getSettings().setJavaScriptEnabled(true);
                 extra.set(view);
                 view.loadUrl("https://evil.example/via-second-webview");
             });
-            long deadline = System.currentTimeMillis() + PROBE_TIMEOUT_MS;
-            while (System.currentTimeMillis() < deadline && !recordedTunnelTo("evil.example")) {
-                Thread.sleep(250);
-            }
-            assertTrue("a plain WebView's navigation must still be stopped at the proxy",
-                    recordedTunnelTo("evil.example"));
-            assertTrue(PolicyMetrics.get().count(PolicyMetrics.Counter.BLOCKED_TUNNELS) > blockedBefore);
+            awaitTunnelRefusal("evil.example", before);
             scenario.onActivity(activity -> extra.get().destroy());
         }
     }
@@ -152,18 +171,36 @@ public class EgressGuardTest {
     }
 
     private static boolean recordedTunnelTo(String host) {
+        return tunnelRefusalsTo(host) > 0;
+    }
+
+    /** How many refused tunnels to {@code host} the diagnostics report currently lists. */
+    private static int tunnelRefusalsTo(String host) {
+        int n = 0;
         for (PolicyMetrics.BlockEvent event : PolicyMetrics.get().recentBlocks()) {
             if (event.url().startsWith("connect://" + host + ":")) {
-                return true;
+                n++;
             }
         }
-        return false;
+        return n;
+    }
+
+    /** Wait for a new refused tunnel to {@code host} - i.e. for the connection to have reached the proxy. */
+    private static void awaitTunnelRefusal(String host, int before) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + PROBE_TIMEOUT_MS;
+        while (System.currentTimeMillis() < deadline && tunnelRefusalsTo(host) <= before) {
+            Thread.sleep(250);
+        }
+        assertTrue("the connection to " + host + " must have reached the proxy and been refused there "
+                + "(refusals before: " + before + ", now: " + tunnelRefusalsTo(host) + ")\n"
+                + PolicyMetrics.get().snapshot(), tunnelRefusalsTo(host) > before);
     }
 
     /** Talk to the proxy the way Chromium does and return the status line of its reply. */
     private static String connect(int port, String request) throws IOException {
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 2000);
+            // The literal Chromium is given. (Android's getLoopbackAddress() is ::1, which must NOT work.)
+            socket.connect(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 2000);
             socket.setSoTimeout(15_000);
             socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
             socket.getOutputStream().flush();

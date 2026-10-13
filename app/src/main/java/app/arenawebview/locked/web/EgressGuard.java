@@ -158,7 +158,7 @@ public final class EgressGuard {
         // refuses every IP-literal and single-label host. (The manifest forbids cleartext, so http:// and
         // ws:// never get as far as the proxy either.)
         final ProxyConfig config = new ProxyConfig.Builder()
-                .addProxyRule("127.0.0.1:" + running.port())
+                .addProxyRule(EgressProxy.LOOPBACK_HOST + ":" + running.port())
                 .removeImplicitRules()
                 .build();
         Executor onMain = new Executor() {
@@ -188,7 +188,8 @@ public final class EgressGuard {
             callbacks = new ArrayList<Callback>(WAITING);
             WAITING.clear();
         }
-        Log.i(TAG, "egress guard ready: every WebView connection now goes through 127.0.0.1:" + port);
+        Log.i(TAG, "egress guard ready: every WebView connection now goes through "
+                + EgressProxy.LOOPBACK_HOST + ":" + port);
         for (Callback callback : callbacks) {
             callback.onReady(port);
         }
