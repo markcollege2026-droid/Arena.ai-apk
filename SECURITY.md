@@ -67,8 +67,9 @@ is Google's server-side policy and this app does not work around it (README §3,
    pinned to an in-app `CONNECT`-only proxy (`web/EgressGuard`, `net/EgressProxy`), so every connection
    Chromium opens - `https`, `wss`, worker fetches, preconnects - arrives as `CONNECT host:443` and is
    refused with `403` unless the host is on the allow-list and the port is 443 (`EgressGuardTest`
-   proves it for a page-script WebSocket on a device). What the proxy does *not* do is look inside the
-   tunnel: it forwards TLS bytes unread, so the content an allow-listed host exchanges is not inspected,
+   proves it for a page-script WebSocket on a device; the same run also caught Chromium's own autofill
+   crowdsourcing query to `content-autofill.googleapis.com`, browser-level traffic that no hook had ever
+   reported - see TEST_REPORT.md). What the proxy does *not* do is look inside the tunnel: it forwards TLS bytes unread, so the content an allow-listed host exchanges is not inspected,
    and this document does not claim that it is. WebRTC is not reachable (camera/microphone permission
    requests are denied and the API's media paths need them); a data channel would be an ICE/UDP flow
    that no HTTP proxy carries, and Chromium's WebRTC honours the proxy setting by falling back to TURN

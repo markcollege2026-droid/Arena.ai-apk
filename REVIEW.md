@@ -231,7 +231,12 @@ At the time of the first pass these were left alone because each is a product de
 >   loads nothing until `onReady`; a load requested while starting is deferred, a load after a failure shows
 >   the error overlay. Tests: `EgressProxyTest` (12, real sockets), `TunnelPolicyTest` (9),
 >   `SourceInvariantsTest.nothingLoadsBeforeTheEgressGuardIsReadyAndThereIsNoDirectFallback`, and on the
->   device `EgressGuardTest` (3). Dependency added: `androidx.webkit:webkit:1.12.1`.
+>   device `EgressGuardTest` (3). Dependency added: `androidx.webkit:webkit:1.12.1`. Verified on the API 34
+>   emulator in CI run 38484542679 (55/55; the WebView's own traffic tunnels through the guard, a page-script
+>   WebSocket to a foreign host is refused at the proxy, and Chromium's autofill query to
+>   `content-autofill.googleapis.com` - invisible to every hook - is refused too). One gotcha worth recording:
+>   Android's `InetAddress.getLoopbackAddress()` is `::1`; the listener must bind the IPv4 literal it tells
+>   Chromium about, or every load fails closed with `ERR_PROXY_CONNECTION_FAILED` (TEST_REPORT.md).
 > * **5.2 implemented** - 3 s interval with an immediate tick on resume (`startWatchdog` posts the first tick
 >   at once). The callbacks remain the primary mechanism; README rule 24 now says so.
 > * **5.3 not taken** - `restoreState` stays, verified synchronously (§3.5); the user keeps their place.

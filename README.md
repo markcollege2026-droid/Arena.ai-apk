@@ -7,7 +7,7 @@ UI, and it does not touch Arena.ai's authentication, CAPTCHA or access rules.
 **Installable APK:** [Releases page](https://github.com/markcollege2026-droid/Arena.ai-apk/releases) -
 or download the `arena-webview-apk` artifact from the [Actions runs](https://github.com/markcollege2026-droid/Arena.ai-apk/actions).
 
-**Package:** `app.arenawebview.locked` · **versionName:** 1.1.0 · **minSdk:** 24 (Android 7.0) ·
+**Package:** `app.arenawebview.locked` · **versionName:** 1.2.0 (unreleased) · **minSdk:** 24 (Android 7.0) ·
 **targetSdk:** 35 · **permissions:** `INTERNET`, `ACCESS_NETWORK_STATE` only.
 
 > Read [SECURITY.md](SECURITY.md) for the threat model and an honest list of what a WebView wrapper
@@ -62,7 +62,7 @@ sideloading and for CI verification, and it is not a production signing key.** S
 
 | Job | What it does |
 | --- | --- |
-| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (2397 tests, including a seeded 120,000-evaluation URL fuzz) |
+| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (2420 tests, including a seeded 120,000-evaluation URL fuzz and the egress proxy on real loopback sockets) |
 | `build-apk` | Builds debug + release APKs, runs `aapt2 dump badging` assertions, writes `APK-SHA256SUMS.txt` |
 | `instrumented-tests` | Boots an API 34 emulator and runs `connectedDebugAndroidTest` (the live-site smoke test is skipped if the runner has no network path to arena.ai) |
 | `release` | On a `v*` tag: publishes a GitHub Release with both APKs, checksums, badging output and release notes |

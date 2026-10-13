@@ -38,7 +38,10 @@ follow-ups below. Nothing new becomes reachable.
   (including "the tunnel decision is never looser than the navigation decision" across the whole case
   table), two new source invariants (one `reload()` call site; no load before the guard, no direct
   fallback, loopback only), and on the device `EgressGuardTest` (raw `CONNECT` to the running guard, a
-  page-script WebSocket to a foreign host, a second plain WebView). JVM suite: 2419 tests.
+  page-script WebSocket to a foreign host, a second plain WebView). JVM suite: 2420 tests; device suite:
+  55 tests. The green run and what its device log shows - including Chromium's own autofill query to
+  `content-autofill.googleapis.com` being refused, a connection no previous build could see - is in
+  TEST_REPORT.md.
 
 ## Code-review follow-ups (also in this build)
 
