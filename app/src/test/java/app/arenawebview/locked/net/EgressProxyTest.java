@@ -48,6 +48,7 @@ public class EgressProxyTest {
     private final List<String> dialled = Collections.synchronizedList(new ArrayList<String>());
     private final List<PolicyResult> refused = Collections.synchronizedList(new ArrayList<PolicyResult>());
     private final List<Throwable> proxyErrors = Collections.synchronizedList(new ArrayList<Throwable>());
+    private final List<String> badRequests = Collections.synchronizedList(new ArrayList<String>());
     private PolicyMetrics metrics;
     private EgressProxy proxy;
 
@@ -112,6 +113,11 @@ public class EgressProxyTest {
 
             @Override
             public void onTunnelOpened(String host) {
+            }
+
+            @Override
+            public void onBadRequest(String requestLine) {
+                badRequests.add(requestLine);
             }
 
             @Override
@@ -256,6 +262,21 @@ public class EgressProxyTest {
         }
         assertTrue(dialled.isEmpty());
         assertEquals(bad.length, metrics.count(PolicyMetrics.Counter.BLOCKED_TUNNELS));
+        assertEquals(bad.length, badRequests.size());
+        assertEquals("GET http://arena.ai/ HTTP/1.1", badRequests.get(0));
+        assertEquals("", badRequests.get(badRequests.size() - 1));
+    }
+
+    @Test
+    public void loggedRequestLinesAreSafeToPrint() {
+        assertEquals("CONNECT a:1 HTTP/1.1", EgressProxy.printableRequestLine("CONNECT a:1 HTTP/1.1\r\nHost: a\r\n"));
+        assertEquals("GET ? HTTP/1.1", EgressProxy.printableRequestLine("GET \u0007 HTTP/1.1\r\n"));
+        assertEquals("", EgressProxy.printableRequestLine(null));
+        StringBuilder huge = new StringBuilder();
+        for (int i = 0; i < 1000; i++) {
+            huge.append('x');
+        }
+        assertEquals(160, EgressProxy.printableRequestLine(huge.toString()).length());
     }
 
     @Test

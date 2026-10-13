@@ -59,6 +59,9 @@ public final class EgressProxy implements Closeable {
 
         void onTunnelOpened(String host);
 
+        /** Something that was not a well-formed {@code CONNECT} arrived; {@code requestLine} is sanitised. */
+        void onBadRequest(String requestLine);
+
         void onProxyError(String what, Throwable error);
     }
 
@@ -215,6 +218,9 @@ public final class EgressProxy implements Closeable {
                 // Not CONNECT, or malformed. A plain-text proxy request (GET http://...) would mean
                 // cleartext, which the policy and the manifest both refuse anyway.
                 metrics.increment(PolicyMetrics.Counter.BLOCKED_TUNNELS);
+                if (listener != null) {
+                    listener.onBadRequest(printableRequestLine(head.text));
+                }
                 respond(out, RESPONSE_BAD_REQUEST);
                 return;
             }
@@ -493,6 +499,24 @@ public final class EgressProxy implements Closeable {
                 // A diagnostics hook must never take the proxy down.
             }
         }
+    }
+
+    /** First line of a request head, control characters replaced, capped - safe to log. */
+    static String printableRequestLine(String head) {
+        if (head == null) {
+            return "";
+        }
+        int eol = head.indexOf('\n');
+        String line = eol < 0 ? head : head.substring(0, eol);
+        if (line.endsWith("\r")) {
+            line = line.substring(0, line.length() - 1);
+        }
+        StringBuilder sb = new StringBuilder(Math.min(line.length(), 160));
+        for (int i = 0; i < line.length() && sb.length() < 160; i++) {
+            char c = line.charAt(i);
+            sb.append(c < 0x20 || c > 0x7e ? '?' : c);
+        }
+        return sb.toString();
     }
 
     private static void respond(OutputStream out, byte[] response) {

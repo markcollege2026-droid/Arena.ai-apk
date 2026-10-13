@@ -133,6 +133,11 @@ public final class EgressGuard {
                         }
 
                         @Override
+                        public void onBadRequest(String requestLine) {
+                            Log.w(TAG, "egress rejected a request that is not a CONNECT: " + requestLine);
+                        }
+
+                        @Override
                         public void onProxyError(String what, Throwable error) {
                             Log.e(TAG, "egress proxy error in " + what, error);
                         }
