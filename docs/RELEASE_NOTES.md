@@ -1,8 +1,49 @@
-# Unreleased (after 1.1.0) - code review follow-ups
+# Release notes - Arena WebView (Locked) 1.2.0 (unreleased)
 
-Changes from the examination documented in `REVIEW.md`. Nothing new becomes reachable; two things that
-the documentation already promised are now true in the code, and one crash-recovery path now follows the
-platform contract.
+Third build. It closes the one gap SECURITY.md had always listed first - connections the `WebViewClient`
+hooks never see - adds a way to **reload the page without leaving the app**, and carries the code-review
+follow-ups below. Nothing new becomes reachable.
+
+## What is new in 1.2.0
+
+* **Every connection the WebView opens now goes through an in-app egress guard.** At start-up the app
+  starts a tiny `CONNECT`-only proxy on `127.0.0.1` (`net/EgressProxy`, pure Java, 500 lines) and pins
+  the WebView to it with `androidx.webkit.ProxyController` (`web/EgressGuard`): one rule for every
+  scheme, no direct fallback, no implicit localhost bypass, never cleared. The proxy opens a tunnel only to an allow-listed host on
+  port 443 and answers `403` to anything else, so a **WebSocket**, a worker fetch, a preconnect - anything
+  that used to bypass `shouldInterceptRequest` - is stopped at the host level, counted
+  (`BLOCKED_TUNNELS`) and listed in the diagnostics report as `connect://host:port`. Nothing is loaded
+  before the WebView has confirmed the guard is in place; if the device's WebView cannot be routed (no
+  `PROXY_OVERRIDE` support, i.e. a very old System WebView) the app shows an error and loads nothing
+  rather than loading unguarded. The proxy never terminates TLS; certificate checks and the system-CA-only
+  trust policy are untouched. Side effects: no HTTP/3 (QUIC does not traverse a `CONNECT` tunnel), and a
+  device-wide HTTP proxy is chained through instead of bypassed.
+* **Reload without leaving the app.** Pull down from the top edge of the page, press F5 / Ctrl+R / a
+  keyboard's refresh key, or use the overlay button. A reload is a navigation: the current URL is verified
+  again first (`MainActivity.reloadCurrentPage`, the only `WebView.reload()` call site), and a page that
+  no longer passes is replaced by the start page instead. Counted as `USER_RELOADS`.
+* **Watchdog: immediate check on resume, then every 3 seconds** (was every second). The request layer
+  and the egress guard refuse an off-policy load before it starts; the watchdog is the last line, not the
+  first, and no longer needs to wake the main thread once a second.
+* **Documentation now matches the code on three points** found in the review: the single deliberate
+  user-agent change (the `; wv` WebView marker is removed; nothing else is impersonated) is disclosed
+  instead of being contradicted by a "no user-agent spoofing" sentence; `accounts.google.com` is
+  documented as allowed in the main view as well as in the sign-in window (which is what the live test
+  always exercised); and the WebSocket limitation is restated as "host-checked, not content-checked".
+* **Dependencies:** `androidx.webkit:webkit:1.12.1` (the only supported API for a WebView proxy) and
+  `androidx.swiperefreshlayout:swiperefreshlayout:1.1.0`. No permission changes; the CI badging check is
+  unchanged.
+* **New tests:** `EgressProxyTest` (the proxy on real loopback sockets with a fake upstream: transparent
+  bytes both ways, every refusal class, `502` on upstream failure, concurrency), `TunnelPolicyTest`
+  (including "the tunnel decision is never looser than the navigation decision" across the whole case
+  table), two new source invariants (one `reload()` call site; no load before the guard, no direct
+  fallback, loopback only), and on the device `EgressGuardTest` (raw `CONNECT` to the running guard, a
+  page-script WebSocket to a foreign host, a second plain WebView). JVM suite: 2419 tests.
+
+## Code-review follow-ups (also in this build)
+
+Changes from the examination documented in `REVIEW.md`. Two things that the documentation already
+promised are now true in the code, and one crash-recovery path now follows the platform contract.
 
 * **`arena.ai.` (trailing dot) is refused**, as README rule 2 always said. The policy used to fold it into
   `arena.ai`; a browser treats it as a different origin, so such a page would have been a logged-out,
@@ -19,7 +60,7 @@ platform contract.
   (the previous code reloaded into the dead view, which shows nothing). A dead sign-in window or hidden
   pop-up is simply closed.
 * **A restored session is verified synchronously** before it can be displayed (previously: on the first
-  watchdog tick, up to one second later).
+  watchdog tick, up to one watchdog interval later).
 * **The network-layer check asks the document question for main-frame requests** instead of the
   sub-resource question for everything.
 * **New tests:** `UrlPolicyFuzzTest` (seeded, 40,000 mutated URLs x 3 traffic classes, invariants rather

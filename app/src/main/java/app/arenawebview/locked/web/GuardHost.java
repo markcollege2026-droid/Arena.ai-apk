@@ -47,6 +47,12 @@ public interface GuardHost {
     /** The main frame failed to load for a non-policy reason (no network, TLS, DNS, ...). */
     void onLoadError(String url, String description);
 
+    /**
+     * The primary WebView finished loading a page that passed verification. Informational: the host uses
+     * it to end a user-requested reload (pull-to-refresh spinner); nothing security-relevant hangs off it.
+     */
+    void onPageFinished(String url);
+
     /** A TLS error was refused (the app never proceeds through a certificate error). */
     void onSslErrorBlocked(String url);
 

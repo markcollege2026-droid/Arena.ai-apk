@@ -107,6 +107,15 @@ public final class PolicyConfig {
     }
 
     /**
+     * Evaluate a TCP tunnel request ({@code CONNECT host:port}) from the egress proxy: may this app open
+     * any TLS connection to that host at all? Host-level only; the URL questions above still apply to
+     * everything the WebView hooks can see.
+     */
+    public PolicyResult evaluateTunnel(String host, int port) {
+        return UrlPolicy.evaluateTunnel(host, port, this);
+    }
+
+    /**
      * True when the URL is a page of a sign-in hand-off (Google's account host) rather than an Arena.ai
      * page. Used to decide whether a pop-up must become an in-app sign-in window: the OAuth flow needs a
      * real window of its own, because the site's page talks to it through {@code window.opener}.

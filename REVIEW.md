@@ -11,9 +11,10 @@ off the list**. What I found and fixed are edges: one documented guarantee that 
 keep (trailing-dot hosts), one rule written before the 1.1.0 `SUBDOCUMENT` class and never revisited
 (`blob:` origins), a start-up check that could be fooled by a duplicate entry, a crash-recovery path that
 did not follow the platform contract (renderer loss), and a one-second verification gap after state
-restore. The larger "better ways" - complete egress control for WebSockets and an event-driven watchdog -
-are described in §5 and deliberately not implemented here, because each changes behaviour that should be
-decided by the maintainers.
+restore. The larger "better ways" - complete egress control for WebSockets and a slower watchdog - are
+described in §5; they were deliberately left out of the first pass, because each changes behaviour that
+should be decided by the maintainers, and were then implemented in a second pass at the maintainers'
+request (status notes at the top of §4 and §5).
 
 ---
 
@@ -191,7 +192,14 @@ README rows 2 and 24 and the test counts, SECURITY.md's evidence row, and an *Un
 
 ## 4. Things the documentation promises that the code does not do (decisions for the maintainers)
 
-I did not change these because each is a product decision rather than a bug.
+> **Status (second pass):** all three are resolved. 1 - the `; wv` strip is kept and disclosed as the
+> single deliberate deviation (README limitation 5, SECURITY.md §4.5, TEST_REPORT.md). 2 - the code's
+> behaviour is kept (`accounts.google.com` may be a top-level page in the main view too; the live test
+> depends on it) and the documents now say so (README "What is allow-listed", SECURITY.md §4.6).
+> 3 - superseded by §5.1 being implemented: WebSockets are now host-checked by the egress guard, and
+> the wording everywhere is "host-checked, not content-checked".
+
+At the time of the first pass these were left alone because each is a product decision rather than a bug.
 
 1. **"No user-agent spoofing" vs. the `; wv` strip.** SECURITY.md §4.5 and README limitation 5 say the
    UA is not spoofed; `WebViewHardening` removes the `; wv` token. Google's sign-in explicitly refuses
@@ -213,7 +221,26 @@ I did not change these because each is a product decision rather than a bug.
 
 ---
 
-## 5. Better ways (recommended, not implemented)
+## 5. Better ways (recommended; 5.1, 5.2 and the documentation items implemented in the second pass)
+
+> **Status (second pass):**
+> * **5.1 implemented** - `net/EgressProxy.java` (pure Java, loopback, `CONNECT`-only, `PolicyConfig.evaluateTunnel`
+>   on every tunnel, `403` otherwise, `502` on upstream failure, never a fallback) and `web/EgressGuard.java`
+>   (`WebViewFeature.PROXY_OVERRIDE` check, `ProxyController.setProxyOverride` with a single rule for every
+>   scheme and no `addDirect`, state machine `NOT_STARTED → STARTING → READY | FAILED`). `MainActivity`
+>   loads nothing until `onReady`; a load requested while starting is deferred, a load after a failure shows
+>   the error overlay. Tests: `EgressProxyTest` (12, real sockets), `TunnelPolicyTest` (9),
+>   `SourceInvariantsTest.nothingLoadsBeforeTheEgressGuardIsReadyAndThereIsNoDirectFallback`, and on the
+>   device `EgressGuardTest` (3). Dependency added: `androidx.webkit:webkit:1.12.1`.
+> * **5.2 implemented** - 3 s interval with an immediate tick on resume (`startWatchdog` posts the first tick
+>   at once). The callbacks remain the primary mechanism; README rule 24 now says so.
+> * **5.3 not taken** - `restoreState` stays, verified synchronously (§3.5); the user keeps their place.
+> * **5.4** - `pruneDeadPopups` turned out to be called (it only removes nulls, harmless); left as is with
+>   the SDK check. The other small items are unchanged.
+> * **Also added on request:** an in-app reload (`ui/PullToRefreshFrame` around the primary WebView, F5 /
+>   Ctrl+R / refresh key, the overlay button) through `MainActivity.reloadCurrentPage`, the single
+>   `WebView.reload()` call site, which re-verifies the current URL first. Dependency added:
+>   `androidx.swiperefreshlayout:swiperefreshlayout:1.1.0`.
 
 ### 5.1 Complete egress control: a local CONNECT proxy via `androidx.webkit.ProxyController`
 The interception hooks cover navigations, sub-resources and (via the service-worker client) SW fetches,
@@ -268,7 +295,10 @@ places where it currently relies on more than one layer agreeing.
 
 | File | Change |
 | --- | --- |
-| `policy/UrlPolicy.java` | trailing dot refused; null traffic class fails closed; origin-based blob rule; `checkPath` internal flag |
+| `policy/UrlPolicy.java` | trailing dot refused; null traffic class fails closed; origin-based blob rule; `checkPath` internal flag; second pass: `evaluateTunnel(host, port, config)` |
+| `net/EgressProxy.java`, `web/EgressGuard.java`, `ui/PullToRefreshFrame.java` | second pass: new (egress guard, reload gesture) |
+| `MainActivity.java` | second pass: guard start-up and gating, deferred first load, `reloadCurrentPage`, 3 s watchdog with immediate tick, keyboard reload |
+| `policy/PolicyMetrics.java` | second pass: `TUNNELS_OPENED`, `BLOCKED_TUNNELS`, `USER_RELOADS` |
 | `policy/PolicyConfig.java` | map lookup; duplicate/null entries rejected; primary URL must be a product page |
 | `policy/ArenaAllowlist.java` | Javadoc of `merge` |
 | `web/GuardHost.java`, `web/BaseGuardHost.java` | `onRenderProcessGone(view, crashed)` |

@@ -28,8 +28,8 @@ android {
         // a modern Chromium. 24 (Android 7.0) keeps the app usable on old hardware.
         minSdk 24
         targetSdk 35
-        versionCode 2
-        versionName '1.1.0'
+        versionCode 3
+        versionName '1.2.0'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
@@ -81,6 +81,13 @@ android {
 }
 
 dependencies {
+    // ProxyController: points every WebView connection in this process at the in-app egress proxy
+    // (web/EgressGuard + net/EgressProxy). This is what makes the host allow-list hold for WebSockets
+    // and for anything else the WebViewClient hooks never see.
+    implementation 'androidx.webkit:webkit:1.12.1'
+    // Pull-to-refresh container for the primary WebView (ui/PullToRefreshFrame).
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+
     // The policy layer is pure Java and is verified with plain JUnit on the JVM.
     testImplementation 'junit:junit:4.13.2'
 

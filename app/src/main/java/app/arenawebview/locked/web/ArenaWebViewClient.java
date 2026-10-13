@@ -214,6 +214,9 @@ public class ArenaWebViewClient extends WebViewClient {
     public void onPageFinished(WebView view, String url) {
         super.onPageFinished(view, url);
         verifyFinalUrl(view, url, "onPageFinished");
+        if (host.isPrimaryWebView(view)) {
+            host.onPageFinished(url);
+        }
     }
 
     @Override

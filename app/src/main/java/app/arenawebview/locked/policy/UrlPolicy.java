@@ -239,6 +239,48 @@ public final class UrlPolicy {
     }
 
     /**
+     * The question the egress proxy asks for every {@code CONNECT host:port} it is handed: may this app
+     * open <em>any</em> TLS connection to that host?
+     *
+     * <p>This is a host-level question, deliberately weaker than the three URL questions: at the TCP
+     * layer there is no path, no role and no traffic class - only a name and a port - and the URL hooks
+     * keep enforcing paths and roles on top. It is also the only question that WebSockets and every other
+     * transport the WebView hooks cannot see are asked, so it has the same host rules as a URL: exact
+     * allow-listed names only, port 443 only, no IP literals, no look-alikes.</p>
+     *
+     * @param host the host as it appears in the CONNECT request (any case; must not contain a port)
+     * @param port the requested port
+     */
+    public static PolicyResult evaluateTunnel(String host, int port, PolicyConfig config) {
+        String raw = "connect://" + (host == null ? "" : host) + ":" + port;
+        if (config == null) {
+            return PolicyResult.block(BlockReason.INVALID_HOST, "", raw, "no policy configured");
+        }
+        if (host == null || host.isEmpty()) {
+            return PolicyResult.block(BlockReason.EMPTY_HOST, "", raw, "empty host");
+        }
+        if (host.indexOf('[') >= 0 || host.indexOf(']') >= 0) {
+            return PolicyResult.block(BlockReason.IP_LITERAL_HOST, "", raw, truncate(host));
+        }
+        if (host.indexOf('@') >= 0) {
+            return PolicyResult.block(BlockReason.USERINFO_PRESENT, "", raw, truncate(host));
+        }
+        String canonicalHost = canonicalizeHost(host);
+        if (canonicalHost == null) {
+            BlockReason reason = containsNonAscii(host) ? BlockReason.NON_ASCII_HOST : BlockReason.INVALID_HOST;
+            return PolicyResult.block(reason, "", raw, truncate(host));
+        }
+        if (port != 443) {
+            return PolicyResult.block(BlockReason.PORT_NOT_ALLOWED, canonicalHost, raw, String.valueOf(port));
+        }
+        AllowEntry entry = config.findByHost(canonicalHost);
+        if (entry == null) {
+            return PolicyResult.block(BlockReason.HOST_NOT_ALLOWED, canonicalHost, raw, "");
+        }
+        return PolicyResult.allow(canonicalHost, raw, entry);
+    }
+
+    /**
      * Strict host canonicalisation: lower-casing is the only transformation applied.
      *
      * <p>A trailing dot is <em>not</em> stripped. {@code https://arena.ai./} resolves to the same server

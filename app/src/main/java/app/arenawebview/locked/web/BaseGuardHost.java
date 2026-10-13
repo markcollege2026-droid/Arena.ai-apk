@@ -46,6 +46,11 @@ public abstract class BaseGuardHost implements GuardHost {
     }
 
     @Override
+    public void onPageFinished(String url) {
+        // Informational only.
+    }
+
+    @Override
     public void onSslErrorBlocked(String url) {
         Log.i(TAG, "TLS error refused");
     }

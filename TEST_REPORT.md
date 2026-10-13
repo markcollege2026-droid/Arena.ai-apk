@@ -181,11 +181,14 @@ Stated plainly, because a wrapper's weaknesses matter more than its claims:
   automating it is exactly what this project refuses to do. What is tested is the mechanism (the window
   is kept, fenced, closable, destroyed) and the reachability of the host.
 * **Google's own decision about embedded browsers** is outside this app's control and is only *reported*
-  by the probe, never worked around (no user-agent spoofing, no Custom Tab, no `ACTION_VIEW`).
+  by the probe, never worked around (no Custom Tab, no `ACTION_VIEW`; the single deliberate user-agent
+  change - dropping the `; wv` WebView marker - is disclosed in SECURITY.md §4).
 * **A CAPTCHA cannot be forced on demand**, so the widget test logs what the site references in that
   environment instead of asserting a challenge appeared.
-* **WebSocket/WebRTC payloads** are not inspectable through `shouldInterceptRequest`; the handshake URL
-  is policy-checked, the stream is not.
+* **WebSocket payloads** are not inspectable: since 1.2.0 every WebSocket is forced through the in-app
+  egress proxy, which refuses any host that is not on the list (`EgressGuardTest` proves this with a
+  page-script WebSocket to a foreign host), but the proxy forwards TLS bytes unread, so the stream to an
+  allow-listed host is not inspected.
 * **Media-capture denial** is covered by a source invariant only: driving it needs a page that asks for
   the microphone/camera, which the test suite does not do.
 * **A rooted device, or a repackaged APK**, defeats the wrapper; nothing here detects that.

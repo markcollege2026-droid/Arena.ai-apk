@@ -37,7 +37,7 @@ public class WatchdogRecoveryTest {
                 webView.loadUrl("https://evil.example/definitely-not-allowed");
             });
 
-            // Give the request layer, the page hooks and the 1s watchdog time to act.
+            // Give the request layer, the page hooks and the 3-second watchdog time to act.
             Thread.sleep(4000);
 
             scenario.onActivity(activity -> {

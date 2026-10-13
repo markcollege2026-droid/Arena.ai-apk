@@ -61,7 +61,13 @@ public final class PolicyMetrics {
         /** Renderer process losses handled by tearing the WebView down. */
         RENDERER_GONE,
         /** Incoming intents from other apps that were ignored (the app has no deep-link handling). */
-        IGNORED_INCOMING_INTENTS
+        IGNORED_INCOMING_INTENTS,
+        /** TLS tunnels the in-app egress proxy opened to an allow-listed host on port 443. */
+        TUNNELS_OPENED,
+        /** {@code CONNECT} requests the egress proxy refused (host not listed, wrong port, malformed). */
+        BLOCKED_TUNNELS,
+        /** Reloads the user asked for (pull-to-refresh, F5 / Ctrl+R); every one re-verifies the URL first. */
+        USER_RELOADS
     }
 
     /** One refused destination, kept for the in-app report. */

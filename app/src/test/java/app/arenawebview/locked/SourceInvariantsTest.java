@@ -120,6 +120,53 @@ public class SourceInvariantsTest {
                 1, count(sources, ".loadUrl("));
         String main = code("app/arenawebview/locked/MainActivity.java");
         assertTrue(main.contains("public void loadVerifiedDestination(String url, String source)"));
+
+        // A reload is a navigation too. Exactly one call site, and it re-verifies the current URL first.
+        assertEquals("every reload must go through reloadCurrentPage", 1, count(sources, ".reload("));
+        int at = main.indexOf("private void reloadCurrentPage(String source)");
+        assertTrue(at >= 0);
+        String body = main.substring(at, main.indexOf(".reload(", at));
+        assertTrue("the current URL must be verified before it is reloaded",
+                body.contains("policy.evaluateNavigation(current)"));
+        assertTrue("an unverified page is replaced by the start page, not reloaded",
+                body.contains("loadVerifiedDestination(policy.primaryUrl()"));
+    }
+
+    /**
+     * The egress guard is the one layer that sees WebSockets. It must be installed before the first load,
+     * it must never offer Chromium a direct fallback, and it must listen on loopback only.
+     */
+    @Test
+    public void nothingLoadsBeforeTheEgressGuardIsReadyAndThereIsNoDirectFallback() throws Exception {
+        String main = code("app/arenawebview/locked/MainActivity.java");
+        String guard = code("app/arenawebview/locked/web/EgressGuard.java");
+        String proxy = code("app/arenawebview/locked/net/EgressProxy.java");
+
+        int at = main.indexOf("public void loadVerifiedDestination(String url, String source)");
+        String body = main.substring(at, main.indexOf(".loadUrl(", at));
+        assertTrue("the single loadUrl must be gated on the egress guard", body.contains("EgressGuard.isReady()"));
+        String onCreate = main.substring(main.indexOf("protected void onCreate("),
+                main.indexOf("private void startSession("));
+        assertTrue("onCreate hands over to startSession", onCreate.contains("startSession(savedInstanceState)"));
+        assertFalse("the start page is not loaded from onCreate", onCreate.contains("\"startup\""));
+        String begin = main.substring(main.indexOf("private void beginSession("),
+                main.indexOf("private void attachPrimaryWebView("));
+        assertTrue("the start page is loaded once the guard reported ready",
+                begin.contains("loadVerifiedDestination(policy.primaryUrl(), \"startup\")"));
+        assertTrue(main.contains("EgressGuard.install(policy, metrics"));
+
+        assertTrue(guard.contains("WebViewFeature.PROXY_OVERRIDE"));
+        assertTrue("one rule for every scheme", guard.contains("addProxyRule(\"127.0.0.1:\""));
+        assertFalse("a direct fallback would let a failed proxy become no proxy", guard.contains("addDirect("));
+        assertFalse(guard.contains("addBypassRule("));
+        assertTrue("loopback and link-local destinations go through the guard too", guard.contains(".removeImplicitRules()"));
+        assertFalse("the override is for the process lifetime", guard.contains("clearProxyOverride("));
+
+        assertTrue("loopback only", proxy.contains("InetAddress.getLoopbackAddress()"));
+        assertFalse(proxy.contains("0.0.0.0"));
+        assertTrue("only CONNECT is served", proxy.contains("\"CONNECT\".equals(parts[0])"));
+        assertTrue("the policy decides every tunnel", proxy.contains("policy.evaluateTunnel(request.host, request.port)"));
+        assertFalse("the proxy never reads TLS", proxy.contains("SSLSocket") || proxy.contains("javax.net.ssl"));
     }
 
     @Test
@@ -329,7 +376,7 @@ public class SourceInvariantsTest {
 
         assertTrue(main.contains("public void onRenderProcessGone(WebView view, boolean crashed)"));
         assertTrue("the dead primary view is destroyed", main.contains("dead.destroy()"));
-        assertTrue("and removed from the hierarchy", main.contains("root.removeView(dead)"));
+        assertTrue("and removed from the hierarchy", main.contains("removeFromParent(dead)"));
         assertTrue("and replaced through the one factory", count(main, "attachPrimaryWebView();") == 2);
         assertEquals("the primary view is created in exactly one method", 1, count(main, "createPrimaryWebView("));
     }
