@@ -194,7 +194,8 @@ jobs:
             set -x
             mkdir -p docs/evidence
             adb logcat -c || true
-            ./gradlew --no-daemon :app:connectedDebugAndroidTest --stacktrace || echo "instrumented tests reported failures" > /tmp/instrumented-failed
+            ( ./gradlew --no-daemon :app:connectedDebugAndroidTest --stacktrace; echo $? > /tmp/gradle-exit ) 2>&1 | tee /tmp/gradle-instrumented.log
+            test "$(cat /tmp/gradle-exit)" = 0 || echo "instrumented tests reported failures" > /tmp/instrumented-failed
             adb logcat -d -s ArenaWebViewLocked:V > docs/evidence/device-logcat.txt || true
             # Screenshot of the app as evidence of what it renders in this environment. The connected
             # task uninstalls the APKs when it finishes, so install the debug build again first.
@@ -215,7 +216,67 @@ jobs:
             grep -E "blocked by CORS policy" docs/evidence/device-logcat.txt | head -n 5 || true
             echo "=== google sign-in and CAPTCHA probes ==="
             grep -E "probe" docs/evidence/device-logcat.txt || true
+            echo "=== egress guard on the device ==="
+            grep -E "egress" docs/evidence/device-logcat.txt | head -n 40 || true
+            cp /tmp/gradle-instrumented.log docs/evidence/gradle-instrumented.log || true
             test ! -f /tmp/instrumented-failed
+
+      # Failures are surfaced as workflow annotations (readable from the Checks API and the run page
+      # without downloading the artifact or the raw log): one per failed test, plus the Gradle tail when
+      # the run broke before any test could report.
+      - name: Summarise instrumented failures as annotations
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, xml.etree.ElementTree as ET
+          def esc(msg):
+              return msg.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          def trim(text, limit=1800):
+              text = (text or '').strip()
+              return text if len(text) <= limit else text[:limit] + ' ...'
+          total = failures = emitted = 0
+          for path in sorted(glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)):
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError:
+                  continue
+              for case in root.iter('testcase'):
+                  total += 1
+                  problem = case.find('failure')
+                  if problem is None:
+                      problem = case.find('error')
+                  if problem is None:
+                      continue
+                  failures += 1
+                  if emitted < 8:
+                      emitted += 1
+                      title = f"{case.get('classname', '?').split('.')[-1]}.{case.get('name', '?')}"
+                      message = (problem.get('message') or '') + '\n' + (problem.text or '')
+                      print(f"::error title={esc(title)}::{esc(trim(message))}")
+          print(f"::notice title=Instrumented tests::{total} test cases reported, {failures} failed")
+          if total == 0 and os.path.exists('/tmp/gradle-instrumented.log'):
+              log = open('/tmp/gradle-instrumented.log', errors='replace').read()
+              interesting = [l for l in log.splitlines() if re.search(r'error:|FAILED|What went wrong|Exception|Could not|No tests|INSTRUMENTATION', l)]
+              print(f"::error title=Instrumented run produced no test results::{esc(trim(chr(10).join(interesting[-40:]) or log[-1800:]))}")
+          if os.path.exists('docs/evidence/device-logcat.txt'):
+              device = open('docs/evidence/device-logcat.txt', errors='replace').read().splitlines()
+              def strip(line):
+                  # "10-13 23:14:23.878  4740  6199 I ArenaWebViewLocked: msg" -> "23:14:23 msg"
+                  m = re.match(r'\S+ (\S+?)\.\d+\s+\d+\s+\d+ \w \S+: (.*)', line)
+                  return f"{m.group(1)} {m.group(2)}" if m else line
+              views = [
+                  ('Egress guard on the device', r'egress|deferred|guard', 30),
+                  ('Page loads on the device', r'load \(|main frame load error|recovery \(|watchdog found|refused document|restored', 30),
+                  ('Live probes on the device', r'live smoke|probe|evaluateJavascript', 20),
+                  ('Policy counters on the device', r'TUNNELS|NAVIGATIONS|BLOCKED_REQUESTS|RECOVERY|RELOADS', 24),
+                  ('Refused sub-resources on the device', r'refused sub-resource', 15),
+              ]
+              for title, pattern, limit in views:
+                  lines = [strip(l) for l in device if re.search(pattern, l)]
+                  if lines:
+                      print(f"::notice title={esc(title)} ({len(lines)} lines)::{esc(trim(chr(10).join(lines[:limit])))}")
+          PY
 
       - name: Publish instrumented test evidence
         if: always()

@@ -1,5 +1,52 @@
 # Test report
 
+## 1.2.0 (unreleased) - egress guard, in-app reload: what the CI run showed
+
+Run [38484542679](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38484542679) on
+branch `arena/a6a0b1d6-arena-ai-apk`, all three jobs green:
+
+| Suite | Where | Result |
+| --- | --- | --- |
+| Security core + the egress proxy on real loopback sockets | JVM, GitHub runner, JDK 17 (`unit-tests`) | **2420 tests, 0 failures** (`EgressProxyTest` 13, `TunnelPolicyTest` 9, 2 new source invariants) |
+| APK build + `aapt2` inspection | `build-apk` | **passed** - `INTERNET` only asserted, no camera/location/storage/contacts, not debuggable, one launchable activity; the two new AndroidX dependencies add no permission or component |
+| Guards on a real WebView | API 34 emulator, `connectedDebugAndroidTest` | **55/55** (52 previous + `EgressGuardTest` 3) |
+
+What the device log of that run says, read literally (the workflow now prints these lines as
+annotations, so they are visible without downloading the artifact):
+
+* `egress guard ready: every WebView connection now goes through 127.0.0.1:37043`, and from then on one
+  `egress tunnel <host>` line per connection the WebView opened - `arena.ai`, `www.google.com`,
+  `accounts.google.com`, ... - **24 tunnels opened by the end of the run, 0 main-frame load errors**: the
+  real site, the Google sign-in page (`SIGNIN_FORM_PRESENT | title=Sign in - Google Accounts`) and the
+  reCAPTCHA scripts all loaded *through* the guard.
+* `websocket probe: "started"` followed 0.3 s later by `egress refused BLOCK reason=HOST_NOT_ALLOWED
+  host=evil.example`: a page-script `new WebSocket('wss://evil.example/socket')` - which no
+  `WebViewClient` hook sees - arrived at the proxy as a `CONNECT` and was refused there. The same for a
+  plain second `WebView` navigating to `https://evil.example/`.
+* Raw `CONNECT` probes against the running guard: `evil.example:443` → 403, `arena.ai:8443` → 403,
+  `arena.ai.evil.example:443` → 403, `10.0.2.2:443` → 403, `GET http://arena.ai/` → 400,
+  `arena.ai:443` → `200 Connection established`.
+* **An unexpected catch:** `egress refused BLOCK reason=HOST_NOT_ALLOWED host=content-autofill.googleapis.com`,
+  many times. That is Chromium's own autofill crowdsourcing query (form signatures sent to Google when a
+  page with forms is shown), browser-level traffic that no interception hook ever reported. Previous
+  builds could not see it; this one refuses it. Nothing on any page needed it.
+* **Fail-closed, observed rather than claimed:** the first run of this branch had the listener on `::1`
+  (Android's `InetAddress.getLoopbackAddress()`) while the WebView was told `127.0.0.1`. Every page load
+  in that run ended in `main frame load error: -5 net::ERR_PROXY_CONNECTION_FAILED` - nothing loaded
+  unguarded, the live tests tolerated the "offline" outcome, and the raw-socket probe still passed
+  because it used the same platform default. Fixed by spelling out the IPv4 loopback as one constant
+  shared by the listener and the proxy rule, with a JVM test that `::1` does *not* answer and a device
+  probe that uses the literal `127.0.0.1`. Run
+  [38483682701](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38483682701) is the
+  failing one, kept as the record of what fail-closed looks like.
+
+Not shown by this run: a *user* performing the pull-to-refresh gesture or pressing F5 (no instrumented
+test drives the gesture; `reloadCurrentPage` is covered by source invariants only), and behaviour on a
+WebView without `PROXY_OVERRIDE` support (every CI image has it; the code path shows the error overlay
+and loads nothing).
+
+---
+
 What has actually been executed for **1.1.0** (Google sign-in + in-app CAPTCHA support), what it
 proved, and what it did not. Raw excerpts live in [docs/EVIDENCE.md](docs/EVIDENCE.md); the workflow is
 [.github/workflows/android.yml](.github/workflows/android.yml). The previous release's report is kept at
@@ -181,11 +228,14 @@ Stated plainly, because a wrapper's weaknesses matter more than its claims:
   automating it is exactly what this project refuses to do. What is tested is the mechanism (the window
   is kept, fenced, closable, destroyed) and the reachability of the host.
 * **Google's own decision about embedded browsers** is outside this app's control and is only *reported*
-  by the probe, never worked around (no user-agent spoofing, no Custom Tab, no `ACTION_VIEW`).
+  by the probe, never worked around (no Custom Tab, no `ACTION_VIEW`; the single deliberate user-agent
+  change - dropping the `; wv` WebView marker - is disclosed in SECURITY.md §4).
 * **A CAPTCHA cannot be forced on demand**, so the widget test logs what the site references in that
   environment instead of asserting a challenge appeared.
-* **WebSocket/WebRTC payloads** are not inspectable through `shouldInterceptRequest`; the handshake URL
-  is policy-checked, the stream is not.
+* **WebSocket payloads** are not inspectable: since 1.2.0 every WebSocket is forced through the in-app
+  egress proxy, which refuses any host that is not on the list (`EgressGuardTest` proves this with a
+  page-script WebSocket to a foreign host), but the proxy forwards TLS bytes unread, so the stream to an
+  allow-listed host is not inspected.
 * **Media-capture denial** is covered by a source invariant only: driving it needs a page that asks for
   the microphone/camera, which the test suite does not do.
 * **A rooted device, or a repackaged APK**, defeats the wrapper; nothing here detects that.

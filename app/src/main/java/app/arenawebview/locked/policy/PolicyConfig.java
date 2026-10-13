@@ -2,8 +2,10 @@ package app.arenawebview.locked.policy;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * The complete, immutable navigation policy of the wrapper.
@@ -32,8 +34,15 @@ public final class PolicyConfig {
     private final String primaryUrl;
     private final List<AllowEntry> entries;
 
+    /** Exact host to entry. Built once; a host can appear at most once, which the constructor enforces. */
+    private final Map<String, AllowEntry> entriesByHost;
+
     /**
      * @param primaryUrl the app's start page; must itself pass {@link #evaluateNavigation(String)}
+     * @throws IllegalArgumentException if a host is listed twice. Two entries for one host would mean
+     *                                  that whichever came second is silently ignored - a path pin or a
+     *                                  role that a reviewer can read in the source but that is never
+     *                                  enforced. That is a programming error, so it fails at start-up.
      */
     public PolicyConfig(String primaryUrl, List<AllowEntry> entries) {
         if (primaryUrl == null || primaryUrl.isEmpty()) {
@@ -43,13 +52,28 @@ public final class PolicyConfig {
             throw new IllegalArgumentException("at least one allow-list entry is required");
         }
         List<AllowEntry> copy = new ArrayList<AllowEntry>(entries);
+        Map<String, AllowEntry> byHost = new HashMap<String, AllowEntry>(copy.size() * 2);
+        for (AllowEntry entry : copy) {
+            if (entry == null) {
+                throw new IllegalArgumentException("allow-list entries must not be null");
+            }
+            if (byHost.put(entry.host(), entry) != null) {
+                throw new IllegalArgumentException("host listed twice in the allow-list: " + entry.host());
+            }
+        }
         this.primaryUrl = primaryUrl;
         this.entries = Collections.unmodifiableList(copy);
+        this.entriesByHost = byHost;
 
         // Fail loudly at start-up if the configured start page would not pass the configured policy.
-        if (!evaluateNavigation(primaryUrl).isAllowed()) {
-            throw new IllegalStateException(
-                    "primaryUrl is not allowed by this policy: " + evaluateNavigation(primaryUrl).describe());
+        // "Pass" means a real product page: an inert form such as about:blank is also "allowed" as a
+        // document, but a start page that shows nothing is a misconfiguration, not a policy.
+        PolicyResult start = evaluateNavigation(primaryUrl);
+        if (!start.isAllowed()) {
+            throw new IllegalStateException("primaryUrl is not allowed by this policy: " + start.describe());
+        }
+        if (start.matchedEntry() == null || !start.matchedEntry().isProduct()) {
+            throw new IllegalStateException("primaryUrl must be a page of the product itself: " + primaryUrl);
         }
     }
 
@@ -83,6 +107,15 @@ public final class PolicyConfig {
     }
 
     /**
+     * Evaluate a TCP tunnel request ({@code CONNECT host:port}) from the egress proxy: may this app open
+     * any TLS connection to that host at all? Host-level only; the URL questions above still apply to
+     * everything the WebView hooks can see.
+     */
+    public PolicyResult evaluateTunnel(String host, int port) {
+        return UrlPolicy.evaluateTunnel(host, port, this);
+    }
+
+    /**
      * True when the URL is a page of a sign-in hand-off (Google's account host) rather than an Arena.ai
      * page. Used to decide whether a pop-up must become an in-app sign-in window: the OAuth flow needs a
      * real window of its own, because the site's page talks to it through {@code window.opener}.
@@ -106,14 +139,9 @@ public final class PolicyConfig {
         return entry != null && entry.isProduct();
     }
 
-    /** Find the entry that matches a canonical host, or null. */
+    /** Find the entry for a canonical host, or null. Exact match only; there is nothing to iterate. */
     AllowEntry findByHost(String canonicalHost) {
-        for (AllowEntry entry : entries) {
-            if (entry.host().equals(canonicalHost)) {
-                return entry;
-            }
-        }
-        return null;
+        return canonicalHost == null ? null : entriesByHost.get(canonicalHost);
     }
 
     /** Human readable dump of the whole policy, used by the diagnostics report and by tests. */

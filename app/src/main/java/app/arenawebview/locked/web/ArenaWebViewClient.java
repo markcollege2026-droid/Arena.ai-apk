@@ -127,7 +127,12 @@ public class ArenaWebViewClient extends WebViewClient {
         }
         Uri uri = request.getUrl();
         String url = uri.toString();
-        PolicyResult result = host.policy().evaluateRequest(url);
+        // The network layer sees every hop of every load, so it must ask the right question for each: a
+        // main-frame request *is* the page (an asset host, a blob or a data URL must be refused here even
+        // if an earlier hook were ever skipped); anything else is traffic inside an approved page.
+        PolicyResult result = request.isForMainFrame()
+                ? host.policy().evaluateNavigation(url)
+                : host.policy().evaluateRequest(url);
         if (result.isAllowed()) {
             // null == "carry on normally". This is what keeps cookies, range requests, streaming media
             // and WebView's own cache working: nothing is proxied, rewritten or buffered.
@@ -209,6 +214,9 @@ public class ArenaWebViewClient extends WebViewClient {
     public void onPageFinished(WebView view, String url) {
         super.onPageFinished(view, url);
         verifyFinalUrl(view, url, "onPageFinished");
+        if (host.isPrimaryWebView(view)) {
+            host.onPageFinished(url);
+        }
     }
 
     @Override
@@ -305,12 +313,16 @@ public class ArenaWebViewClient extends WebViewClient {
 
     /**
      * A lost renderer process would otherwise take the whole app down. Reporting the event as handled
-     * lets the host tear the WebView down and offer a clean restart instead.
+     * keeps the app alive, but the WebView that lost its renderer is dead from this moment on: the
+     * platform requires it to be removed and destroyed, and a {@code loadUrl} on it would only ever
+     * show a blank view. So this does not "recover" the view - it hands it to the host to be replaced
+     * (primary view) or closed (pop-up / sign-in window).
      */
     @Override
     public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
         host.metrics().increment(PolicyMetrics.Counter.RENDERER_GONE);
-        host.onRecoveryRequired("render-process-gone", "");
+        boolean crashed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && detail != null && detail.didCrash();
+        host.onRenderProcessGone(view, crashed);
         return true;
     }
 

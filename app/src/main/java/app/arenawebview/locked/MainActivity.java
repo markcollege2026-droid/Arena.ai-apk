@@ -15,6 +15,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.text.InputType;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -40,9 +41,11 @@ import app.arenawebview.locked.policy.PolicyConfig;
 import app.arenawebview.locked.policy.PolicyMetrics;
 import app.arenawebview.locked.policy.PolicyResult;
 import app.arenawebview.locked.ui.AuthWindow;
+import app.arenawebview.locked.ui.PullToRefreshFrame;
 import app.arenawebview.locked.ui.StatusOverlay;
 import app.arenawebview.locked.web.ArenaWebChromeClient;
 import app.arenawebview.locked.web.ArenaWebViewClient;
+import app.arenawebview.locked.web.EgressGuard;
 import app.arenawebview.locked.web.GuardHost;
 import app.arenawebview.locked.web.WebViewHardening;
 
@@ -58,8 +61,13 @@ import app.arenawebview.locked.web.WebViewHardening;
  *       sheet.</li>
  *   <li>Incoming intents are ignored completely - the activity has no deep-link handling, so another
  *       app cannot steer it.</li>
- *   <li>A watchdog re-checks the visible URL every second; anything that is not approved is replaced by
- *       the start page.</li>
+ *   <li>Every connection the WebView opens - including WebSockets - goes through an in-app loopback
+ *       proxy that only tunnels to allow-listed hosts on port 443; nothing is loaded until that guard
+ *       is confirmed installed.</li>
+ *   <li>A watchdog re-checks the visible URL on every resume and every 3 s after; anything that is not
+ *       approved is replaced by the start page.</li>
+ *   <li>Pull down from the top edge of the page (or press F5 / Ctrl+R) to reload it; the URL is verified
+ *       again before the reload.</li>
  *   <li>Back never leaves the app: it goes back through verified history, falls back to the start page,
  *       and otherwise asks for a second press before closing.</li>
  * </ul>
@@ -68,7 +76,15 @@ public class MainActivity extends Activity implements GuardHost {
 
     private static final String TAG = "ArenaWebViewLocked";
 
-    private static final long WATCHDOG_INTERVAL_MS = 1000L;
+    /**
+     * The watchdog is the backstop behind the per-navigation checks ({@code onPageStarted},
+     * {@code onPageFinished}, {@code doUpdateVisitedHistory} - which also covers {@code pushState}). Those
+     * fire on every commit, so the timer only has to catch what no callback reports; it also runs once
+     * immediately on every resume. 3 s keeps it a safety net rather than a busy loop.
+     */
+    private static final long WATCHDOG_INTERVAL_MS = 3000L;
+    /** A user-requested reload that has not finished by then is simply no longer shown as "refreshing". */
+    private static final long REFRESH_SPINNER_TIMEOUT_MS = 20_000L;
     private static final long EXIT_BACK_WINDOW_MS = 2500L;
     private static final long MESSAGE_THROTTLE_MS = 900L;
 
@@ -76,9 +92,14 @@ public class MainActivity extends Activity implements GuardHost {
     private final PolicyMetrics metrics = PolicyMetrics.get();
 
     private FrameLayout root;
+    private PullToRefreshFrame pullToRefresh;
+    /** A verified load asked for while the egress guard was still starting; replayed by beginSession. */
+    private String deferredUrl;
+    private String deferredSource;
     private WebView webView;
     private ArenaWebChromeClient chromeClient;
     private StatusOverlay overlay;
+    private Runnable refreshSpinnerTimeout;
 
     /**
      * The in-app window a sign-in hand-off is shown in (Google's account pages). Null-hosted most of the
@@ -123,20 +144,27 @@ public class MainActivity extends Activity implements GuardHost {
 
         handler = new Handler(Looper.getMainLooper());
 
-        chromeClient = new ArenaWebChromeClient(this, this);
-        webView = WebViewHardening.createPrimaryWebView(
-                this, new ArenaWebViewClient(this), chromeClient, this);
-        webView.setId(R.id.arena_webview);
-
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         root.setFitsSystemWindows(true);
-        root.addView(webView, new FrameLayout.LayoutParams(
+        pullToRefresh = new PullToRefreshFrame(this, new PullToRefreshFrame.Listener() {
+            @Override
+            public void onRefreshRequested() {
+                reloadCurrentPage("pull-to-refresh");
+            }
+        });
+        root.addView(pullToRefresh, 0, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        attachPrimaryWebView();
 
         overlay = new StatusOverlay(this, new StatusOverlay.Listener() {
             @Override
             public void onReloadRequested() {
+                if (!EgressGuard.isReady()) {
+                    // The network guard could not be installed earlier; try again before loading anything.
+                    startSession(null);
+                    return;
+                }
                 loadVerifiedDestination(policy.primaryUrl(), "overlay-reload");
             }
 
@@ -164,24 +192,211 @@ public class MainActivity extends Activity implements GuardHost {
 
         applyWindowInsetsPadding();
         setContentView(root);
+        registerBackCallback();
 
-        boolean restored = false;
+        // Nothing is loaded until every connection of this process is known to go through the in-app
+        // egress guard. The WebView stays blank (about:blank needs no network) until then.
+        startSession(savedInstanceState);
+    }
+
+    /**
+     * Install the egress guard, then start the session: a verified restored history if there is one,
+     * the start page otherwise. If the guard cannot be installed, nothing is loaded and the overlay says
+     * why - the fail-closed outcome.
+     */
+    private void startSession(final Bundle savedInstanceState) {
+        EgressGuard.install(policy, metrics, new EgressGuard.Callback() {
+            @Override
+            public void onReady(int port) {
+                if (isFinishing() || isDestroyed() || webView == null) {
+                    return;
+                }
+                beginSession(savedInstanceState);
+            }
+
+            @Override
+            public void onUnavailable(String reason) {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                deferredUrl = null;
+                deferredSource = null;
+                overlay.showError(getString(R.string.egress_unavailable, reason));
+            }
+        });
+    }
+
+    /** Runs once the egress guard is ready: restore a saved session if there is one, then load. */
+    private void beginSession(Bundle savedInstanceState) {
+        WebBackForwardList restoredHistory = null;
         if (savedInstanceState != null) {
             try {
-                restored = webView.restoreState(savedInstanceState) != null;
+                restoredHistory = webView.restoreState(savedInstanceState);
             } catch (Throwable t) {
                 Log.w(TAG, "could not restore WebView state", t);
             }
         }
-        if (!restored) {
+        // The restored history came from a Bundle, and a Bundle is not a trusted source: verify the entry
+        // the WebView is about to show *now*, synchronously, rather than letting it render for up to one
+        // watchdog interval first. The watchdog still re-checks it on its first tick.
+        boolean restored = restoredHistory != null && verifyRestoredSession(restoredHistory);
+
+        String url = deferredUrl;
+        String source = deferredSource;
+        deferredUrl = null;
+        deferredSource = null;
+        if (url != null) {
+            // A load that was asked for while the guard was still starting; it is verified again here.
+            loadVerifiedDestination(url, source);
+        } else if (!restored) {
             loadVerifiedDestination(policy.primaryUrl(), "startup");
         } else {
-            // A restored session is verified by the watchdog on its first tick; until then nothing from
-            // the restored page can be considered displayed.
-            Log.i(TAG, "restored WebView state, awaiting watchdog verification");
+            Log.i(TAG, "restored WebView state (verified), watchdog re-checks on its first tick");
         }
+    }
 
-        registerBackCallback();
+    /**
+     * Create the single primary WebView and put it at the bottom of the view stack - inside the
+     * pull-to-refresh container, below the status overlay and the sign-in window. Called once from
+     * {@link #onCreate} and again whenever the renderer behind the primary view dies (see
+     * {@link #onRenderProcessGone}). This is the only place that assigns {@link #webView} a non-null value.
+     */
+    private void attachPrimaryWebView() {
+        chromeClient = new ArenaWebChromeClient(this, this);
+        webView = WebViewHardening.createPrimaryWebView(
+                this, new ArenaWebViewClient(this), chromeClient, this);
+        webView.setId(R.id.arena_webview);
+        pullToRefresh.addView(webView, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    /**
+     * Reload what is on screen, at the user's request (pull-to-refresh, F5, Ctrl+R). The current URL is
+     * verified again first - a reload is a navigation like any other - and a page that no longer passes,
+     * or no page at all, becomes the start page instead.
+     */
+    private void reloadCurrentPage(String source) {
+        WebView view = webView;
+        if (view == null) {
+            return;
+        }
+        metrics.increment(PolicyMetrics.Counter.USER_RELOADS);
+        if (!EgressGuard.isReady()) {
+            pullToRefresh.finishRefreshing();
+            startSession(null);
+            return;
+        }
+        String current = null;
+        try {
+            current = view.getUrl();
+        } catch (Throwable ignored) {
+            // Treated as "no page".
+        }
+        if (current == null || current.isEmpty() || overlay.isOverlayVisible()) {
+            pullToRefresh.finishRefreshing();
+            loadVerifiedDestination(policy.primaryUrl(), source + ":start");
+            return;
+        }
+        PolicyResult result = policy.evaluateNavigation(current);
+        if (!result.isAllowed()) {
+            metrics.increment(PolicyMetrics.Counter.BLOCKED_NAVIGATIONS);
+            metrics.recordBlock(result.reason(), result.canonicalHost(), current);
+            Log.w(TAG, "reload (" + source + ") refused, current page failed verification: " + result.describe());
+            pullToRefresh.finishRefreshing();
+            loadVerifiedDestination(policy.primaryUrl(), source + ":unverified");
+            return;
+        }
+        Log.i(TAG, "reload (" + source + "): " + result.canonicalHost());
+        showRefreshSpinner();
+        view.reload();
+    }
+
+    private void showRefreshSpinner() {
+        if (!pullToRefresh.isRefreshing()) {
+            pullToRefresh.setRefreshing(true);
+        }
+        if (refreshSpinnerTimeout == null) {
+            refreshSpinnerTimeout = new Runnable() {
+                @Override
+                public void run() {
+                    pullToRefresh.finishRefreshing();
+                }
+            };
+        }
+        handler.removeCallbacks(refreshSpinnerTimeout);
+        handler.postDelayed(refreshSpinnerTimeout, REFRESH_SPINNER_TIMEOUT_MS);
+    }
+
+    private void hideRefreshSpinner() {
+        if (pullToRefresh != null) {
+            pullToRefresh.finishRefreshing();
+        }
+        if (handler != null && refreshSpinnerTimeout != null) {
+            handler.removeCallbacks(refreshSpinnerTimeout);
+        }
+    }
+
+    /**
+     * F5, the dedicated refresh key and Ctrl+R reload, for keyboards and desktop-mode devices. Handled
+     * here, ahead of the view hierarchy, because a focused WebView consumes key events for the page; the
+     * whole press (down, repeats, up) is swallowed so the page never sees half of it.
+     */
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event != null && isReloadKey(event)) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                reloadCurrentPage("keyboard");
+            }
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    private static boolean isReloadKey(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        return keyCode == KeyEvent.KEYCODE_F5 || keyCode == KeyEvent.KEYCODE_REFRESH
+                || (keyCode == KeyEvent.KEYCODE_R && event.isCtrlPressed());
+    }
+
+    /**
+     * After {@code restoreState}, the WebView holds a history whose current entry it is about to load.
+     * Refuse the whole restored session unless that entry is an approved page.
+     *
+     * @param history the list {@code restoreState} returned
+     * @return true when the restored current entry passed the policy
+     */
+    private boolean verifyRestoredSession(WebBackForwardList history) {
+        WebView view = webView;
+        if (view == null) {
+            return false;
+        }
+        String current = null;
+        try {
+            WebHistoryItem item = history.getCurrentItem();
+            current = item == null ? null : item.getUrl();
+            if (current == null || current.isEmpty()) {
+                current = view.getUrl();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "could not read the restored history", t);
+        }
+        if (current == null || current.isEmpty()) {
+            return false;
+        }
+        PolicyResult result = policy.evaluateNavigation(current);
+        if (!result.isAllowed()) {
+            metrics.increment(PolicyMetrics.Counter.BLOCKED_NAVIGATIONS);
+            metrics.recordBlock(result.reason(), result.canonicalHost(), current);
+            Log.w(TAG, "restored session refused: " + result.describe());
+            try {
+                view.stopLoading();
+                view.clearHistory();
+            } catch (Throwable ignored) {
+                // The start page is loaded next, which replaces whatever the restore began.
+            }
+            return false;
+        }
+        return true;
     }
 
     @Override
@@ -225,6 +440,7 @@ public class MainActivity extends Activity implements GuardHost {
     @Override
     protected void onDestroy() {
         stopWatchdog();
+        hideRefreshSpinner();
         closeSignInWindow("destroy");
         if (chromeClient != null) {
             chromeClient.destroyPopups();
@@ -237,7 +453,7 @@ public class MainActivity extends Activity implements GuardHost {
                 webView.stopLoading();
                 webView.setWebChromeClient(null);
                 webView.setWebViewClient(new WebViewClient());
-                root.removeView(webView);
+                removeFromParent(webView);
                 webView.destroy();
             } catch (Throwable t) {
                 Log.w(TAG, "WebView teardown failed", t);
@@ -455,10 +671,29 @@ public class MainActivity extends Activity implements GuardHost {
             Log.w(TAG, "refused internal load (" + source + "): " + result.describe());
             return;
         }
+        if (!EgressGuard.isReady()) {
+            // Fail closed: without the egress guard a load would go out directly, WebSockets unseen.
+            if (EgressGuard.state() == EgressGuard.State.FAILED) {
+                Log.w(TAG, "refused internal load (" + source + "): egress guard unavailable");
+                overlay.showError(getString(R.string.egress_unavailable, EgressGuard.failure()));
+                return;
+            }
+            // Still starting: keep the destination for beginSession, which runs when the guard is ready.
+            Log.i(TAG, "deferred load (" + source + ") until the egress guard is ready: "
+                    + result.canonicalHost());
+            deferredUrl = url;
+            deferredSource = source;
+            return;
+        }
         metrics.increment(PolicyMetrics.Counter.ALLOWED_NAVIGATIONS);
         overlay.hide();
         Log.i(TAG, "load (" + source + "): " + result.canonicalHost());
         view.loadUrl(url);
+    }
+
+    @Override
+    public void onPageFinished(String url) {
+        hideRefreshSpinner();
     }
 
     @Override
@@ -468,6 +703,7 @@ public class MainActivity extends Activity implements GuardHost {
 
     @Override
     public void onPageLoadBlocked(String url, PolicyResult result) {
+        hideRefreshSpinner();
         // The page itself failed to load because it was not allowed. Cover the (now broken) WebView with
         // the native overlay and leave it to the user to return to the start page.
         overlay.showBlocked(destinationHost(url, result),
@@ -478,6 +714,7 @@ public class MainActivity extends Activity implements GuardHost {
 
     @Override
     public void onLoadError(String url, String description) {
+        hideRefreshSpinner();
         Log.i(TAG, "main frame load error: " + description);
         overlay.showError("arena.ai could not be reached (" + description + ").\n\n"
                 + "Check the network connection and try again, or copy the diagnostics report.");
@@ -492,6 +729,7 @@ public class MainActivity extends Activity implements GuardHost {
 
     @Override
     public void onRecoveryRequired(String reason, String offendingUrl) {
+        hideRefreshSpinner();
         metrics.increment(PolicyMetrics.Counter.RECOVERY_RELOADS);
         Log.w(TAG, "recovery (" + reason + ") from " + offendingUrl);
         // A page that ended up somewhere unverified takes its sign-in window down with it.
@@ -501,6 +739,68 @@ public class MainActivity extends Activity implements GuardHost {
             return;
         }
         loadVerifiedDestination(policy.primaryUrl(), "recovery:" + reason);
+    }
+
+    /**
+     * The renderer behind a WebView died. The dead object is never loaded into again: the primary view is
+     * replaced by a fresh one that starts on the verified start page, and a dead sign-in window is simply
+     * closed (which is also what its own client does; this is the belt to that brace).
+     */
+    @Override
+    public void onRenderProcessGone(WebView view, boolean crashed) {
+        String how = crashed ? "crashed" : "was killed by the system";
+        if (view != null && view == signInWindowWebView) {
+            Log.w(TAG, "sign-in window renderer " + how + "; closing the window");
+            closeSignInWindow("render-process-gone");
+            return;
+        }
+        if (view == null || view != webView) {
+            // A hidden pop-up's renderer: PopupRouterClient has already finished that window.
+            Log.w(TAG, "pop-up renderer " + how + "; nothing to replace");
+            return;
+        }
+        Log.w(TAG, "primary renderer " + how + "; replacing the WebView");
+        metrics.increment(PolicyMetrics.Counter.RECOVERY_RELOADS);
+        replacePrimaryWebView(view);
+        loadVerifiedDestination(policy.primaryUrl(), "render-process-gone");
+        onMessage(getString(R.string.renderer_restarted));
+    }
+
+    /**
+     * Tear the dead primary WebView down - together with everything that hung off it: sign-in window,
+     * hidden pop-ups, fullscreen video - and attach a new one in its place.
+     */
+    private void replacePrimaryWebView(WebView dead) {
+        closeSignInWindow("render-process-gone");
+        if (chromeClient != null) {
+            chromeClient.destroyPopups();
+        }
+        if (fullscreenView != null) {
+            exitFullscreen(false);
+        }
+        webView = null;
+        chromeClient = null;
+        hideRefreshSpinner();
+        try {
+            dead.stopLoading();
+            dead.setWebChromeClient(null);
+            dead.setWebViewClient(new WebViewClient());
+            removeFromParent(dead);
+        } catch (Throwable t) {
+            Log.w(TAG, "dead WebView detach failed", t);
+        }
+        try {
+            dead.destroy();
+        } catch (Throwable t) {
+            Log.w(TAG, "dead WebView destroy failed", t);
+        }
+        attachPrimaryWebView();
+    }
+
+    private static void removeFromParent(View view) {
+        if (view != null && view.getParent() instanceof ViewGroup) {
+            ((ViewGroup) view.getParent()).removeView(view);
+        }
     }
 
     @Override
@@ -807,7 +1107,8 @@ public class MainActivity extends Activity implements GuardHost {
             };
         }
         handler.removeCallbacks(watchdogTask);
-        handler.postDelayed(watchdogTask, WATCHDOG_INTERVAL_MS);
+        // First check right away (a resume is exactly when the screen content is unknown), then periodic.
+        handler.post(watchdogTask);
     }
 
     private void stopWatchdog() {

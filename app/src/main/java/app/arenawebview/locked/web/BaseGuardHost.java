@@ -46,6 +46,11 @@ public abstract class BaseGuardHost implements GuardHost {
     }
 
     @Override
+    public void onPageFinished(String url) {
+        // Informational only.
+    }
+
+    @Override
     public void onSslErrorBlocked(String url) {
         Log.i(TAG, "TLS error refused");
     }
@@ -53,6 +58,12 @@ public abstract class BaseGuardHost implements GuardHost {
     @Override
     public void onRecoveryRequired(String reason, String offendingUrl) {
         Log.i(TAG, "recovery required: " + reason);
+    }
+
+    @Override
+    public void onRenderProcessGone(WebView view, boolean crashed) {
+        // Safe no-op: nothing is loaded into the dead view. A real host replaces or closes it.
+        Log.w(TAG, "renderer gone (" + (crashed ? "crashed" : "killed") + "); no host to replace the view");
     }
 
     @Override

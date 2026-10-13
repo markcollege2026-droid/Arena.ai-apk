@@ -39,7 +39,7 @@ is Google's server-side policy and this app does not work around it (README §3,
 
 | Guarantee | Implementation | Evidence |
 | --- | --- | --- |
-| Only `https://<exact allow-listed host>` is reachable; no wildcards, no suffix matching | `policy/UrlPolicy.java`, `policy/AllowEntry.java`, `policy/PolicyConfig.java` | `UrlPolicyTest` (272 cases x 8 assertions), `AllowlistRegressionTest` |
+| Only `https://<exact allow-listed host>` is reachable; no wildcards, no suffix matching, no trailing-dot aliases | `policy/UrlPolicy.java`, `policy/AllowEntry.java`, `policy/PolicyConfig.java` | `UrlPolicyTest` (292 cases x 8 assertions), `UrlPolicyFuzzTest` (seeded, 120,000 mutated evaluations), `PolicyConfigTest`, `AllowlistRegressionTest` |
 | Refused navigations never happen; refused requests are answered in-process (`403`, empty body) and never sent | `web/ArenaWebViewClient.shouldOverrideUrlLoading`, `shouldInterceptRequest` | `NavigationGuardTest`, `UrlPolicyTest` |
 | Redirect hops are refused | same request hook (each hop is a request) + `WebResourceRequest.isRedirect()` accounting | `NavigationGuardTest.refusesRedirectsToThirdParties`, `PolicyCases` |
 | Pop-ups cannot create a second surface and cannot escape | `web/ArenaWebChromeClient.onCreateWindow`, `web/PopupRouterClient` | `PopupBlockingTest` (12 tests: routed / refused / promoted, plus window bookkeeping) |
@@ -53,20 +53,27 @@ is Google's server-side policy and this app does not work around it (README §3,
 | No cleartext HTTP anywhere, even with a user-installed CA | `UrlPolicy` (scheme rule), `MIXED_CONTENT_NEVER_ALLOW`, `res/xml/network_security_config.xml` | `UrlPolicyTest`, `WebViewSettingsTest`, `ManifestPolicyTest`, CI `aapt2` step |
 | No JavaScript bridge (the classic WebView RCE path) | nothing calls `addJavascriptInterface` | `SourceInvariantsTest.noJavascriptBridgeExists` |
 | Service-worker requests are policed like any other request | `WebViewHardening.installServiceWorkerGuard` | `SourceInvariantsTest`, review |
-| The visible URL is re-verified continuously; anything unapproved is replaced by the start page or covered by a native overlay | `MainActivity.tickWatchdog`, `ArenaWebViewClient` final-URL verification | `WatchdogRecoveryTest` |
+| **Every connection the WebView opens - including WebSockets and anything else the request hooks never see - is refused unless it is to an allow-listed host on port 443** | `net/EgressProxy` (a `CONNECT`-only proxy on `127.0.0.1`, `PolicyConfig.evaluateTunnel` on every tunnel, `403` otherwise), `web/EgressGuard` (pins the WebView to it with `androidx.webkit.ProxyController`: one rule for every scheme, no direct fallback, Chromium's implicit localhost/link-local bypass removed, override never cleared), `MainActivity.loadVerifiedDestination` (no load until the guard reports ready; an error overlay, never an unguarded load, if it cannot be installed) | `EgressProxyTest` (real loopback sockets: allowed tunnel is byte-transparent both ways, foreign host / wrong port / non-CONNECT refused and counted, upstream failure is `502` not a fallback), `TunnelPolicyTest`, `SourceInvariantsTest.nothingLoadsBeforeTheEgressGuardIsReadyAndThereIsNoDirectFallback`, `EgressGuardTest` (device: raw `CONNECT evil.example:443` to the running guard gets `403`; a page-script `new WebSocket('wss://evil.example/')` ends as a refused tunnel; a second, plain WebView in the process is routed too) |
+| Reloading goes through the same verification as any other navigation | `MainActivity.reloadCurrentPage` (the only `WebView.reload()` call site; re-evaluates the current URL first, falls back to the start page) | `SourceInvariantsTest.onlyOnePlaceLoadsUrls` |
+| The visible URL is re-verified continuously; anything unapproved is replaced by the start page or covered by a native overlay | `MainActivity.tickWatchdog` (immediately on resume, then every 3 s in the foreground - the request layer and the egress guard act first, this is the last line), `ArenaWebViewClient` final-URL verification | `WatchdogRecoveryTest` |
 | Back navigation cannot reach an unverified page or another app | `policy/BackNavigator.java`, `MainActivity.handleBackPressed` | `BackNavigatorTest`, `BackNavigationTest` |
 | Minimal device surface: one exported activity, two permissions, no services/receivers/providers, backups off | `AndroidManifest.xml` | `ManifestPolicyTest`, `AppSurfaceTest`, CI `aapt2` step |
 
 ## 4. What is *not* interceptor-blocked (honest list)
 
-1. **WebSockets, WebRTC and QUIC-like transports that do not go through `WebViewClient`.** Android's
+1. **WebSockets and other non-URL-loader connections are host-checked, not content-checked.** Android's
    WebView API exposes `shouldInterceptRequest` for URL-loader requests and `ServiceWorkerClient` for
-   service workers, but not for WebSocket handshakes or WebRTC data channels. Page JavaScript on
-   arena.ai (or any script arena.ai chooses to run) could therefore open a connection to another host.
-   Consequences: it cannot display anything, cannot navigate the WebView, cannot reach the file system,
-   and cannot open another app - but it is an outbound connection this app does not see, and it is not
-   claimed to be blocked. Closing this would require an in-app allow-listing CONNECT proxy plus
-   `ProxyController`; that is deliberately not part of this version.
+   service workers, but not for WebSocket handshakes. That gap is closed one layer down: the WebView is
+   pinned to an in-app `CONNECT`-only proxy (`web/EgressGuard`, `net/EgressProxy`), so every connection
+   Chromium opens - `https`, `wss`, worker fetches, preconnects - arrives as `CONNECT host:443` and is
+   refused with `403` unless the host is on the allow-list and the port is 443 (`EgressGuardTest`
+   proves it for a page-script WebSocket on a device; the same run also caught Chromium's own autofill
+   crowdsourcing query to `content-autofill.googleapis.com`, browser-level traffic that no hook had ever
+   reported - see TEST_REPORT.md). What the proxy does *not* do is look inside the tunnel: it forwards TLS bytes unread, so the content an allow-listed host exchanges is not inspected,
+   and this document does not claim that it is. WebRTC is not reachable (camera/microphone permission
+   requests are denied and the API's media paths need them); a data channel would be an ICE/UDP flow
+   that no HTTP proxy carries, and Chromium's WebRTC honours the proxy setting by falling back to TURN
+   over TCP through it - i.e. through the same host check.
 2. **Anything the page does entirely in memory** (e.g. computing, rendering, storing data in
    localStorage/IndexedDB in the app's private storage). That is normal browser behaviour and is not
    restricted; the app's private storage is not readable by other apps, and backups are disabled.
@@ -84,11 +91,19 @@ is Google's server-side policy and this app does not work around it (README §3,
    entirely, and the unit suite then asserts the smaller host list.
 5. **Google's sign-in pages may refuse to load in an embedded browser.** Google documents sign-in inside
    a WebView as unsupported and commonly answers `accounts.google.com` with a "this browser or app may
-   not be secure" page. This is a server-side decision by Google that this app neither bypasses nor
-   obscures (no user-agent spoofing, no Custom Tab, no `ACTION_VIEW`); the device log records which page
-   was actually served (TEST_REPORT.md §3). Arena.ai's own sign-in inside the WebView is unaffected, and
-   the allow-list still refuses every other Google host - Gmail, Drive, `googleapis.com`, Google Search
-   and the rest.
+   not be secure" page. This is a server-side decision by Google that this app does not try to defeat
+   (no Custom Tab, no `ACTION_VIEW`, no impersonation of another browser). There is exactly **one**
+   deliberate deviation from the stock user-agent string, disclosed here: `WebViewHardening` removes the
+   `; wv` token that marks an Android WebView, and leaves the Chrome/Android version string otherwise
+   intact - the same string the device's Chrome would send. The device log records which page Google
+   actually served (TEST_REPORT.md §3). Arena.ai's own sign-in inside the WebView is unaffected, and the
+   allow-list still refuses every other Google host - Gmail, Drive, `googleapis.com`, Google Search and
+   the rest.
+6. **`accounts.google.com` may be shown in the main view as well as in the sign-in window.** It is the
+   one third-party host with `Role.SIGN_IN`, and that role is not tied to a surface: the sign-in window
+   is where the OAuth pop-up flow puts it, but a redirect-based flow that navigates the main view there
+   is allowed too (and is what `GoogleSignInLiveTest` exercises). Either way it is the same single host,
+   path-free, port 443, and every other Google host stays refused.
 
 ## 5. Residual risks and abuse
 
@@ -96,13 +111,22 @@ is Google's server-side policy and this app does not work around it (README §3,
   signing identity as the release artifacts. Use your own key for anything you distribute.
 * **Sideloaded apps are only as trustworthy as their source.** Verify the SHA-256 published with each
   release, or build the APK yourself from this repository - the build is reproducible from source with
-  no runtime dependencies and no downloaded binaries other than the Gradle wrapper (whose checksum is
-  committed and validated in CI).
+  two small runtime dependencies (`androidx.webkit`, which is the only supported way to set a WebView
+  proxy, and `androidx.swiperefreshlayout` for the pull-to-refresh gesture) and no downloaded binaries
+  other than the Gradle wrapper (whose checksum is committed and validated in CI).
+* **The egress guard is a loopback listener.** `net/EgressProxy` binds `127.0.0.1` on an ephemeral
+  port for the life of the process. Another app on the same device can therefore connect to it and get
+  exactly what this app's WebView gets - a TCP tunnel to an allow-listed host on port 443 - and nothing
+  more: no cookies, no session state, no other destination, no cleartext. It is a narrower capability
+  than the `INTERNET` permission every such app already has. Side effects worth knowing: the WebView
+  does not use HTTP/3 (QUIC cannot traverse a `CONNECT` tunnel; HTTP/1.1 and HTTP/2 are unaffected),
+  and a device-wide HTTP proxy, if one is configured, is chained through by the guard rather than
+  bypassed.
 * **A rooted or otherwise compromised device** can bypass anything an app does; that is outside the
   model.
 * **A modified build** is outside the model too. That is exactly why the security-relevant invariants are
   asserted in tests (so an accidental weakening fails the build) and why the guard code is small,
-  dependency-free and readable in one sitting.
+  nearly dependency-free and readable in one sitting.
 
 ## 6. Reporting
 

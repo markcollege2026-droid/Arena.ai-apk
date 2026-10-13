@@ -225,9 +225,10 @@ public final class ArenaAllowlist {
      * Merges capability groups into one entry per host, unioning their path prefixes.
      *
      * <p>Two groups can legitimately want the same host (Google's {@code www.gstatic.com} serves both
-     * sign-in and reCAPTCHA assets). {@link PolicyConfig#findByHost(String)} returns the first entry for
-     * a host, so a host listed twice would silently hide the second list's paths; merging keeps every
-     * prefix reachable and makes the enforced set exactly what the diagnostics report prints.</p>
+     * sign-in and reCAPTCHA assets). {@link PolicyConfig} refuses to be built from a list that names a
+     * host twice (a second entry would otherwise be dead text that a reviewer could read but that is
+     * never enforced), so the groups are merged first: every prefix stays reachable and the enforced set
+     * is exactly what the diagnostics report prints.</p>
      */
     static List<AllowEntry> merge(List<List<AllowEntry>> groups) {
         Map<String, AllowEntry> byHost = new LinkedHashMap<String, AllowEntry>();
