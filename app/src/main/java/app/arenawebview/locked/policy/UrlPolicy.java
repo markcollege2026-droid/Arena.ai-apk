@@ -10,8 +10,11 @@ import java.util.Locale;
  *   <li><b>Deny by default.</b> Every input that cannot be positively proven to be
  *       {@code https://<exactly an allow-listed host>} is refused with a {@link BlockReason}.</li>
  *   <li><b>No wildcards, no suffix matching.</b> A host is accepted only if it is byte-for-byte equal
- *       to an allow-list entry after canonicalisation (lower case, single trailing dot removed). This
- *       removes the entire class of "look-alike" bypasses.</li>
+ *       to an allow-list entry after lower-casing. Nothing else is normalised: a trailing dot
+ *       ({@code arena.ai.}) is a <em>different origin</em> to a browser (separate cookies, separate
+ *       storage, CORS mismatch), so it is refused rather than folded into the canonical host. This
+ *       removes the entire class of "look-alike" bypasses and keeps this validator's notion of "host"
+ *       identical to Chromium's.</li>
  *   <li><b>Kill parser differentials before parsing.</b> Control characters and backslashes are
  *       rejected outright, and tab/newline removal mirrors the WHATWG URL standard that Chromium
  *       implements, so a URL can never mean one thing to this validator and another to the WebView.</li>
@@ -70,8 +73,22 @@ public final class UrlPolicy {
      * @return an immutable {@link PolicyResult}; never null
      */
     public static PolicyResult evaluate(String rawUrl, PolicyConfig config, TrafficClass trafficClass) {
+        return evaluate(rawUrl, config, trafficClass, true);
+    }
+
+    /**
+     * @param checkPath false only when evaluating the <em>origin</em> embedded in a {@code blob:} URL,
+     *                  where the text after the authority is the blob's UUID and not a path on the host
+     */
+    private static PolicyResult evaluate(String rawUrl, PolicyConfig config, TrafficClass trafficClass,
+                                         boolean checkPath) {
         if (config == null) {
             return PolicyResult.block(BlockReason.INVALID_HOST, "", rawUrl, "no policy configured");
+        }
+        if (trafficClass == null) {
+            // A caller that cannot say what the URL is for gets the fail-closed answer, not an exception
+            // thrown inside a WebView callback (which would take the whole app down).
+            return PolicyResult.block(BlockReason.INVALID_HOST, "", rawUrl, "no traffic class");
         }
         if (rawUrl == null) {
             return PolicyResult.block(BlockReason.NULL_URL, "", null, "null");
@@ -131,8 +148,14 @@ public final class UrlPolicy {
                 // A blob URL is <blob:origin/uuid>. Pinning the embedded origin to the allow-list makes
                 // even a forged-origin blob string useless, and fails closed for opaque origins
                 // ("blob:null/...") which this wrapper has no use for.
-                if (remainder.startsWith("https://") || remainder.startsWith("http://")) {
-                    PolicyResult origin = evaluate(remainder, config, TrafficClass.DOCUMENT);
+                //
+                // Only a document can mint a blob, and a document from any allow-listed host can exist in
+                // this app - Arena.ai and sign-in pages as the page itself, asset hosts as the CAPTCHA and
+                // identity *frames* - so the origin is asked the embedded-document question. The text
+                // after the origin is the blob's UUID, not a path on the host, so the entry's path pins
+                // do not apply to it (and could never be satisfied by it).
+                if (startsWithIgnoreCase(remainder, "https://") || startsWithIgnoreCase(remainder, "http://")) {
+                    PolicyResult origin = evaluate(remainder, config, TrafficClass.SUBDOCUMENT, false);
                     if (!origin.isAllowed()) {
                         // Report the reason the *origin* was refused, which is more useful than a generic
                         // "unsupported scheme".
@@ -205,19 +228,27 @@ public final class UrlPolicy {
             return PolicyResult.block(BlockReason.DOCUMENT_NOT_ALLOWED, canonicalHost, rawUrl, "");
         }
 
-        String rawPath = extractRawPath(pathAndBeyond);
-        if (!entry.matchesPath(rawPath)) {
-            return PolicyResult.block(BlockReason.PATH_NOT_ALLOWED, canonicalHost, rawUrl, truncate(rawPath));
+        if (checkPath) {
+            String rawPath = extractRawPath(pathAndBeyond);
+            if (!entry.matchesPath(rawPath)) {
+                return PolicyResult.block(BlockReason.PATH_NOT_ALLOWED, canonicalHost, rawUrl, truncate(rawPath));
+            }
         }
 
         return PolicyResult.allow(canonicalHost, rawUrl, entry);
     }
 
     /**
-     * Strict host canonicalisation.
+     * Strict host canonicalisation: lower-casing is the only transformation applied.
+     *
+     * <p>A trailing dot is <em>not</em> stripped. {@code https://arena.ai./} resolves to the same server
+     * as {@code https://arena.ai/}, but every browser treats it as a separate origin (own cookie jar, own
+     * storage, and a CORS mismatch against the real site), so the page would be a logged-out, half-broken
+     * copy at best. Nothing legitimate ever produces such a URL; refusing it keeps the policy's host
+     * identical to the browser's and is the fail-closed choice.</p>
      *
      * @return the canonical host, or {@code null} if the input is not exactly a plain ASCII DNS name
-     *         of at least two labels with an alphabetic top level domain.
+     *         of at least two labels with an alphabetic top level domain and no trailing dot.
      */
     public static String canonicalizeHost(String host) {
         if (host == null || host.isEmpty()) {
@@ -235,10 +266,7 @@ public final class UrlPolicy {
             }
         }
         String canonical = host.toLowerCase(Locale.ROOT);
-        if (canonical.endsWith(".")) {
-            canonical = canonical.substring(0, canonical.length() - 1);
-        }
-        if (canonical.isEmpty() || canonical.endsWith(".") || canonical.startsWith(".") || canonical.startsWith("-")) {
+        if (canonical.endsWith(".") || canonical.startsWith(".") || canonical.startsWith("-")) {
             return null;
         }
         if (canonical.endsWith("-") || canonical.indexOf("..") >= 0 || canonical.indexOf('.') < 0) {
@@ -295,6 +323,10 @@ public final class UrlPolicy {
             return true;
         }
         return c == '.' || c == '-';
+    }
+
+    private static boolean startsWithIgnoreCase(String value, String prefix) {
+        return value.regionMatches(true, 0, prefix, 0, prefix.length());
     }
 
     private static boolean containsNonAscii(String value) {

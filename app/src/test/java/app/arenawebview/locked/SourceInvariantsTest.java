@@ -302,4 +302,35 @@ public class SourceInvariantsTest {
         assertTrue("an embedded document needs its own traffic class",
                 code("app/arenawebview/locked/policy/UrlPolicy.java").contains("SUBDOCUMENT"));
     }
+
+    /**
+     * A WebView whose renderer died is dead: the platform contract is "remove and destroy", and a
+     * {@code loadUrl} into it shows nothing. The client must therefore hand the view to the host rather
+     * than ask for a "recovery" reload, and the host must destroy the dead view and build a new one from
+     * the single hardened factory.
+     */
+    @Test
+    public void aDeadRendererReplacesTheWebViewInsteadOfReloadingIt() throws Exception {
+        String client = code("app/arenawebview/locked/web/ArenaWebViewClient.java");
+        String router = code("app/arenawebview/locked/web/PopupRouterClient.java");
+        String main = code("app/arenawebview/locked/MainActivity.java");
+
+        int at = client.indexOf("public boolean onRenderProcessGone(");
+        assertTrue("the client must handle a lost renderer", at >= 0);
+        String body = client.substring(at, client.indexOf("return true;", at));
+        assertTrue("the host must be told that the view is dead", body.contains("host.onRenderProcessGone(view"));
+        assertFalse("a dead view must not be 'recovered' by reloading it",
+                body.contains("onRecoveryRequired") || body.contains("loadVerifiedDestination")
+                        || body.contains("loadUrl") || body.contains("reload("));
+
+        at = router.indexOf("public boolean onRenderProcessGone(");
+        assertTrue("a dead pop-up must be finished", at >= 0
+                && router.substring(at, router.indexOf("return true;", at)).contains("finish();"));
+
+        assertTrue(main.contains("public void onRenderProcessGone(WebView view, boolean crashed)"));
+        assertTrue("the dead primary view is destroyed", main.contains("dead.destroy()"));
+        assertTrue("and removed from the hierarchy", main.contains("root.removeView(dead)"));
+        assertTrue("and replaced through the one factory", count(main, "attachPrimaryWebView();") == 2);
+        assertEquals("the primary view is created in exactly one method", 1, count(main, "createPrimaryWebView("));
+    }
 }

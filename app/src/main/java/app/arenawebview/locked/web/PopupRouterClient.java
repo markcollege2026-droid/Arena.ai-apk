@@ -155,6 +155,18 @@ public final class PopupRouterClient extends ArenaWebViewClient {
     }
 
     /**
+     * A pop-up whose renderer died is simply over. It is deregistered and destroyed like any other
+     * finished window; if it was the sign-in window the host closes that window through the usual
+     * {@code onPopupClosed} route. Nothing is ever reloaded into it, and the primary view is untouched.
+     */
+    @Override
+    public boolean onRenderProcessGone(WebView view, android.webkit.RenderProcessGoneDetail detail) {
+        host().metrics().increment(PolicyMetrics.Counter.RENDERER_GONE);
+        finish();
+        return true;
+    }
+
+    /**
      * Tear this hidden window down and tell whoever created it.
      *
      * <p>Two separate things have to happen, in this order:</p>

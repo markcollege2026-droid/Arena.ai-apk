@@ -123,16 +123,10 @@ public class MainActivity extends Activity implements GuardHost {
 
         handler = new Handler(Looper.getMainLooper());
 
-        chromeClient = new ArenaWebChromeClient(this, this);
-        webView = WebViewHardening.createPrimaryWebView(
-                this, new ArenaWebViewClient(this), chromeClient, this);
-        webView.setId(R.id.arena_webview);
-
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
         root.setFitsSystemWindows(true);
-        root.addView(webView, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        attachPrimaryWebView();
 
         overlay = new StatusOverlay(this, new StatusOverlay.Listener() {
             @Override
@@ -165,23 +159,81 @@ public class MainActivity extends Activity implements GuardHost {
         applyWindowInsetsPadding();
         setContentView(root);
 
-        boolean restored = false;
+        WebBackForwardList restoredHistory = null;
         if (savedInstanceState != null) {
             try {
-                restored = webView.restoreState(savedInstanceState) != null;
+                restoredHistory = webView.restoreState(savedInstanceState);
             } catch (Throwable t) {
                 Log.w(TAG, "could not restore WebView state", t);
             }
         }
+        // The restored history came from a Bundle, and a Bundle is not a trusted source: verify the entry
+        // the WebView is about to show *now*, synchronously, rather than letting it render for up to one
+        // watchdog interval first. The watchdog still re-checks it on its first tick.
+        boolean restored = restoredHistory != null && verifyRestoredSession(restoredHistory);
         if (!restored) {
             loadVerifiedDestination(policy.primaryUrl(), "startup");
         } else {
-            // A restored session is verified by the watchdog on its first tick; until then nothing from
-            // the restored page can be considered displayed.
-            Log.i(TAG, "restored WebView state, awaiting watchdog verification");
+            Log.i(TAG, "restored WebView state (verified), watchdog re-checks on its first tick");
         }
 
         registerBackCallback();
+    }
+
+    /**
+     * Create the single primary WebView and put it at the bottom of the view stack, below the status
+     * overlay and the sign-in window. Called once from {@link #onCreate} and again whenever the renderer
+     * behind the primary view dies (see {@link #onRenderProcessGone}). This is the only place that
+     * assigns {@link #webView} a non-null value.
+     */
+    private void attachPrimaryWebView() {
+        chromeClient = new ArenaWebChromeClient(this, this);
+        webView = WebViewHardening.createPrimaryWebView(
+                this, new ArenaWebViewClient(this), chromeClient, this);
+        webView.setId(R.id.arena_webview);
+        root.addView(webView, 0, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    /**
+     * After {@code restoreState}, the WebView holds a history whose current entry it is about to load.
+     * Refuse the whole restored session unless that entry is an approved page.
+     *
+     * @param history the list {@code restoreState} returned
+     * @return true when the restored current entry passed the policy
+     */
+    private boolean verifyRestoredSession(WebBackForwardList history) {
+        WebView view = webView;
+        if (view == null) {
+            return false;
+        }
+        String current = null;
+        try {
+            WebHistoryItem item = history.getCurrentItem();
+            current = item == null ? null : item.getUrl();
+            if (current == null || current.isEmpty()) {
+                current = view.getUrl();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "could not read the restored history", t);
+        }
+        if (current == null || current.isEmpty()) {
+            return false;
+        }
+        PolicyResult result = policy.evaluateNavigation(current);
+        if (!result.isAllowed()) {
+            metrics.increment(PolicyMetrics.Counter.BLOCKED_NAVIGATIONS);
+            metrics.recordBlock(result.reason(), result.canonicalHost(), current);
+            Log.w(TAG, "restored session refused: " + result.describe());
+            try {
+                view.stopLoading();
+                view.clearHistory();
+            } catch (Throwable ignored) {
+                // The start page is loaded next, which replaces whatever the restore began.
+            }
+            return false;
+        }
+        return true;
     }
 
     @Override
@@ -501,6 +553,61 @@ public class MainActivity extends Activity implements GuardHost {
             return;
         }
         loadVerifiedDestination(policy.primaryUrl(), "recovery:" + reason);
+    }
+
+    /**
+     * The renderer behind a WebView died. The dead object is never loaded into again: the primary view is
+     * replaced by a fresh one that starts on the verified start page, and a dead sign-in window is simply
+     * closed (which is also what its own client does; this is the belt to that brace).
+     */
+    @Override
+    public void onRenderProcessGone(WebView view, boolean crashed) {
+        String how = crashed ? "crashed" : "was killed by the system";
+        if (view != null && view == signInWindowWebView) {
+            Log.w(TAG, "sign-in window renderer " + how + "; closing the window");
+            closeSignInWindow("render-process-gone");
+            return;
+        }
+        if (view == null || view != webView) {
+            // A hidden pop-up's renderer: PopupRouterClient has already finished that window.
+            Log.w(TAG, "pop-up renderer " + how + "; nothing to replace");
+            return;
+        }
+        Log.w(TAG, "primary renderer " + how + "; replacing the WebView");
+        metrics.increment(PolicyMetrics.Counter.RECOVERY_RELOADS);
+        replacePrimaryWebView(view);
+        loadVerifiedDestination(policy.primaryUrl(), "render-process-gone");
+        onMessage(getString(R.string.renderer_restarted));
+    }
+
+    /**
+     * Tear the dead primary WebView down - together with everything that hung off it: sign-in window,
+     * hidden pop-ups, fullscreen video - and attach a new one in its place.
+     */
+    private void replacePrimaryWebView(WebView dead) {
+        closeSignInWindow("render-process-gone");
+        if (chromeClient != null) {
+            chromeClient.destroyPopups();
+        }
+        if (fullscreenView != null) {
+            exitFullscreen(false);
+        }
+        webView = null;
+        chromeClient = null;
+        try {
+            dead.stopLoading();
+            dead.setWebChromeClient(null);
+            dead.setWebViewClient(new WebViewClient());
+            root.removeView(dead);
+        } catch (Throwable t) {
+            Log.w(TAG, "dead WebView detach failed", t);
+        }
+        try {
+            dead.destroy();
+        } catch (Throwable t) {
+            Log.w(TAG, "dead WebView destroy failed", t);
+        }
+        attachPrimaryWebView();
     }
 
     @Override

@@ -60,7 +60,6 @@ public final class PolicyCases {
                 true, null);
         both(cases, "explicit default HTTPS port", "https://arena.ai:443/chat", true, null);
         both(cases, "upper case scheme and host", "HTTPS://ARENA.AI/Chat", true, null);
-        both(cases, "single trailing dot (fully qualified name)", "https://arena.ai./chat", true, null);
         both(cases, "www host", "https://www.arena.ai/leaderboard", true, null);
         both(cases, "auth service host", "https://auth.arena.ai/v1/client?_clerk_js_version=5", true, null);
         both(cases, "cdn host", "https://cdn.arena.ai/_next/static/chunks/main.js", true, null);
@@ -89,6 +88,11 @@ public final class PolicyCases {
         sub(cases, "inline data: image", "data:image/png;base64,iVBORw0KGgo=", true, null);
         sub(cases, "inline data: iframe document", "data:text/html,<b>hi</b>", true, null);
         sub(cases, "blob belonging to the site itself", "blob:https://arena.ai/1a2b3c4d", true, null);
+        sub(cases, "blob belonging to the site itself, upper-case origin", "blob:HTTPS://ARENA.AI/1a2b3c4d",
+                true, null);
+        sub(cases, "blob belonging to the site itself, explicit default port",
+                "blob:https://arena.ai:443/1a2b3c4d", true, null);
+        sub(cases, "blob belonging to the auth service", "blob:https://auth.arena.ai/1a2b3c4d", true, null);
 
         // ---------------------------------------------------------------------------------------
         // 2. Inert schemes are not documents: they may never become the visible page
@@ -105,6 +109,14 @@ public final class PolicyCases {
                 BlockReason.UNSUPPORTED_SCHEME);
         sub(cases, "blob with an http origin", "blob:http://arena.ai/1a2b3c4d", false,
                 BlockReason.SCHEME_NOT_HTTPS);
+        sub(cases, "blob whose 'origin' smuggles userinfo", "blob:https://arena.ai@evil.example/1a2b3c4d",
+                false, BlockReason.USERINFO_PRESENT);
+        sub(cases, "blob whose 'origin' has a non-default port", "blob:https://arena.ai:8443/1a2b3c4d",
+                false, BlockReason.PORT_NOT_ALLOWED);
+        sub(cases, "blob of a trailing-dot origin", "blob:https://arena.ai./1a2b3c4d", false,
+                BlockReason.INVALID_HOST);
+        frame(cases, "blob: as a frame", "blob:https://arena.ai/1a2b3c4d", false,
+                BlockReason.UNSUPPORTED_SCHEME);
 
         // ---------------------------------------------------------------------------------------
         // 3. Schemes that could leave the app or reach another app
@@ -191,6 +203,17 @@ public final class PolicyCases {
         both(cases, "non-production portal host", "https://portal.api.preview.arena.ai/", false,
                 BlockReason.HOST_NOT_ALLOWED);
         both(cases, "e-mail security host", "https://mta-sts.arena.ai/", false, BlockReason.HOST_NOT_ALLOWED);
+        // A trailing dot names the same DNS zone but a *different browser origin* (no shared cookies or
+        // storage, CORS mismatch against the real site). It is never produced by the site and is refused
+        // instead of being folded into the canonical host, so this validator and Chromium agree on what
+        // the host is.
+        both(cases, "single trailing dot (fully qualified name)", "https://arena.ai./chat", false,
+                BlockReason.INVALID_HOST);
+        both(cases, "trailing dot with default port", "https://arena.ai.:443/", false,
+                BlockReason.INVALID_HOST);
+        both(cases, "trailing dot on a sign-in host", "https://accounts.google.com./signin", false,
+                BlockReason.INVALID_HOST);
+        both(cases, "two trailing dots", "https://arena.ai../", false, BlockReason.INVALID_HOST);
         both(cases, "punycode look-alike", "https://xn--rena-4qa.ai/", false, BlockReason.HOST_NOT_ALLOWED);
         both(cases, "punycode of the real host", "https://xn--arena-2d0b.ai/", false,
                 BlockReason.HOST_NOT_ALLOWED);
@@ -341,6 +364,23 @@ public final class PolicyCases {
                 BlockReason.DOCUMENT_NOT_ALLOWED);
         doc(cases, "reCAPTCHA script may never become the page",
                 "https://www.google.com/recaptcha/api.js", false, BlockReason.DOCUMENT_NOT_ALLOWED);
+
+        // --- blobs minted by the widget and identity frames ---------------------------------------
+        // A frame that the policy lets exist (asset host, pinned path) may create blob: URLs - workers,
+        // images, audio challenges - and fetch them. The blob carries only the frame's *origin*, never
+        // its path, so the origin is judged as an embedded document and the path pins do not apply.
+        sub(cases, "blob minted by the reCAPTCHA frame", "blob:https://www.google.com/1a2b3c4d", true, null);
+        sub(cases, "blob minted by a Google asset host", "blob:https://www.gstatic.com/1a2b3c4d", true, null);
+        sub(cases, "blob minted by the Turnstile frame", "blob:https://challenges.cloudflare.com/1a2b3c4d",
+                true, null);
+        sub(cases, "blob minted by the sign-in window", "blob:https://accounts.google.com/1a2b3c4d",
+                true, null);
+        sub(cases, "blob of a Google host that is not on the list", "blob:https://www.googleapis.com/1a2b3c4d",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        sub(cases, "blob of a look-alike of a widget host", "blob:https://www.google.com.evil.example/1a2b3c4d",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        doc(cases, "a blob is never a page, whatever its origin", "blob:https://www.google.com/1a2b3c4d",
+                false, BlockReason.UNSUPPORTED_SCHEME);
 
         return cases;
     }

@@ -53,6 +53,21 @@ public interface GuardHost {
     /** The WebView ended up somewhere it must not be; the host must reset it. */
     void onRecoveryRequired(String reason, String offendingUrl);
 
+    /**
+     * The renderer process behind {@code view} is gone - it crashed or the system killed it for memory.
+     *
+     * <p>This is different from {@link #onRecoveryRequired}: the WebView object itself is now dead and
+     * the platform contract is that it must be removed from the view hierarchy and destroyed; calling
+     * {@code loadUrl} on it does nothing useful. The host must therefore <em>replace</em> the primary
+     * WebView (and start it on the verified start page) or <em>close</em> the pop-up/sign-in window it
+     * belonged to. Never load anything into {@code view}.</p>
+     *
+     * @param view    the WebView whose renderer died
+     * @param crashed true when the renderer crashed, false when the system reclaimed it (both are handled
+     *                the same way; the flag exists for the log)
+     */
+    void onRenderProcessGone(WebView view, boolean crashed);
+
     /** A popup/window.open target passed the policy and was re-routed into the single WebView. */
     void onPopupRouted(String url);
 

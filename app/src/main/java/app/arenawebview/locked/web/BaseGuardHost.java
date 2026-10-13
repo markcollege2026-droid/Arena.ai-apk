@@ -56,6 +56,12 @@ public abstract class BaseGuardHost implements GuardHost {
     }
 
     @Override
+    public void onRenderProcessGone(WebView view, boolean crashed) {
+        // Safe no-op: nothing is loaded into the dead view. A real host replaces or closes it.
+        Log.w(TAG, "renderer gone (" + (crashed ? "crashed" : "killed") + "); no host to replace the view");
+    }
+
+    @Override
     public void onPopupRouted(String url) {
         Log.i(TAG, "popup routed into main WebView");
     }

@@ -168,7 +168,6 @@ public class UrlPolicyTest {
     @Test
     public void hostCanonicalisationIsStrict() {
         assertEquals("arena.ai", UrlPolicy.canonicalizeHost("ARENA.AI"));
-        assertEquals("arena.ai", UrlPolicy.canonicalizeHost("arena.ai."));
         assertEquals("www.arena.ai", UrlPolicy.canonicalizeHost("www.arena.ai"));
 
         String[] invalid = {
@@ -176,6 +175,8 @@ public class UrlPolicyTest {
                 "arena.ai%2e", "arena_ai.example", "127.0.0.1", "2130706433", "0x7f.0.0.1",
                 "\u0430rena.ai", "arena\u3002ai", "arena.ai ", " arena.ai", "arena.ai:443", "[::1]",
                 "arena.1", "arena.a",
+                // A trailing dot is a different browser origin, not a spelling of the same host.
+                "arena.ai.", "ARENA.AI.", "www.arena.ai.", "arena.ai..",
         };
         for (String host : invalid) {
             org.junit.Assert.assertNull("must be rejected: '" + host + "'",

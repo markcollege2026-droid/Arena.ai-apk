@@ -39,7 +39,7 @@ is Google's server-side policy and this app does not work around it (README §3,
 
 | Guarantee | Implementation | Evidence |
 | --- | --- | --- |
-| Only `https://<exact allow-listed host>` is reachable; no wildcards, no suffix matching | `policy/UrlPolicy.java`, `policy/AllowEntry.java`, `policy/PolicyConfig.java` | `UrlPolicyTest` (272 cases x 8 assertions), `AllowlistRegressionTest` |
+| Only `https://<exact allow-listed host>` is reachable; no wildcards, no suffix matching, no trailing-dot aliases | `policy/UrlPolicy.java`, `policy/AllowEntry.java`, `policy/PolicyConfig.java` | `UrlPolicyTest` (292 cases x 8 assertions), `UrlPolicyFuzzTest` (seeded, 120,000 mutated evaluations), `PolicyConfigTest`, `AllowlistRegressionTest` |
 | Refused navigations never happen; refused requests are answered in-process (`403`, empty body) and never sent | `web/ArenaWebViewClient.shouldOverrideUrlLoading`, `shouldInterceptRequest` | `NavigationGuardTest`, `UrlPolicyTest` |
 | Redirect hops are refused | same request hook (each hop is a request) + `WebResourceRequest.isRedirect()` accounting | `NavigationGuardTest.refusesRedirectsToThirdParties`, `PolicyCases` |
 | Pop-ups cannot create a second surface and cannot escape | `web/ArenaWebChromeClient.onCreateWindow`, `web/PopupRouterClient` | `PopupBlockingTest` (12 tests: routed / refused / promoted, plus window bookkeeping) |

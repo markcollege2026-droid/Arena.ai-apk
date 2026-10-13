@@ -62,7 +62,7 @@ sideloading and for CI verification, and it is not a production signing key.** S
 
 | Job | What it does |
 | --- | --- |
-| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (2225 tests) |
+| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (2397 tests, including a seeded 120,000-evaluation URL fuzz) |
 | `build-apk` | Builds debug + release APKs, runs `aapt2 dump badging` assertions, writes `APK-SHA256SUMS.txt` |
 | `instrumented-tests` | Boots an API 34 emulator and runs `connectedDebugAndroidTest` (the live-site smoke test is skipped if the runner has no network path to arena.ai) |
 | `release` | On a `v*` tag: publishes a GitHub Release with both APKs, checksums, badging output and release notes |
@@ -79,7 +79,7 @@ configuration that could be swapped out at runtime.
 | # | Guarantee | Mechanism |
 | --- | --- | --- |
 | 1 | Only `https://` loads | Scheme check; `http://`, `file:`, `content:`, `intent:`, `market:`, `javascript:`, `socket:`, `ws(s):` and every other scheme are refused |
-| 2 | Only exact, listed hosts | Exact string match against `ArenaAllowlist` - no suffix or wildcard logic, so `arena.ai.evil.com`, `arena-ai.com`, `arena.ai.` and Unicode/punycode lookalikes never match |
+| 2 | Only exact, listed hosts | Exact string match against `ArenaAllowlist` - no suffix or wildcard logic, so `arena.ai.evil.com`, `arena-ai.com`, `arena.ai.` (a trailing dot is a different browser origin) and Unicode/punycode lookalikes never match. `PolicyConfig` refuses to start if a host is listed twice, so no entry can silently shadow another |
 | 3 | Ports pinned to 443 | Any other explicit port is refused |
 | 4 | No credentials in URLs | `userinfo@host` is refused (the classic `https://arena.ai@evil.com` confusion) |
 | 5 | No IP-literal hosts | IPv4/hex/decimal literals and non-ASCII hosts are refused |
@@ -101,7 +101,7 @@ configuration that could be swapped out at runtime.
 | 21 | Back stays inside the app | Back closes the sign-in window first, then handles the app's own fullscreen video and overlay, then walks WebView history **only to entries that still pass policy**; leaving the app requires a double press |
 | 22 | The app cannot be steered from outside | One exported launcher activity, no deep links, no services/receivers/providers |
 | 23 | Resource files cannot break the build quietly | A JVM test parses every XML file under `res/` and applies the two rules `aapt2` enforces - no unescaped apostrophe/quote in a string resource, no duplicate resource name - and asserts that every page-capable host is pinned in `network_security_config.xml` |
-| 24 | Runtime re-verification | A 1-second watchdog re-checks `WebView.getUrl()` and rewinds to the start page if it is ever off-policy; a lost renderer process tears the WebView down |
+| 24 | Runtime re-verification | A 1-second watchdog re-checks `WebView.getUrl()` and rewinds to the start page if it is ever off-policy; a restored session is verified synchronously before it is shown; a lost renderer process destroys the dead WebView and replaces it with a fresh one on the start page (a dead sign-in window is simply closed) |
 
 Failures are fail-closed: a URL that cannot be parsed, a null/empty URL, or a policy error results in
 a refusal plus an in-app explanation, never in a load.
@@ -212,7 +212,7 @@ app/src/main/java/app/arenawebview/locked/
     BlockedResponses.java      the in-process 403 response
   ui/StatusOverlay.java        native "blocked / error" card
   ui/AuthWindow.java           in-app sign-in window (a view, not an activity)
-app/src/test/                  JVM tests: URL policy table (272 cases in this configuration) + invariants
+app/src/test/                  JVM tests: URL policy table (292 cases in this configuration) + seeded fuzz + invariants
 app/src/androidTest/           emulator tests (guards, escapes, live smoke)
 .github/workflows/android.yml  CI: tests, APK build + verification, release
 docs/                          evidence, release notes

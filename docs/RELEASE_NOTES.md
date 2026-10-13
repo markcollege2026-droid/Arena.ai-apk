@@ -1,3 +1,31 @@
+# Unreleased (after 1.1.0) - code review follow-ups
+
+Changes from the examination documented in `REVIEW.md`. Nothing new becomes reachable; two things that
+the documentation already promised are now true in the code, and one crash-recovery path now follows the
+platform contract.
+
+* **`arena.ai.` (trailing dot) is refused**, as README rule 2 always said. The policy used to fold it into
+  `arena.ai`; a browser treats it as a different origin, so such a page would have been a logged-out,
+  CORS-broken copy of the site. Found by a differential fuzz against the WHATWG URL parser (446 of
+  80,000 mutated inputs disagreed, all of this one shape; now 0).
+* **A `blob:` URL is judged by its origin, as an embedded document.** Blobs minted by the CAPTCHA and
+  identity *frames* (asset hosts, path-pinned) were refused because the blob's UUID was treated as a path
+  on the host and the origin was asked the "may this be the page?" question. A blob is still never a page
+  or a frame.
+* **`PolicyConfig` refuses an allow-list that names a host twice** instead of silently using the first
+  entry, and the primary URL must be a product page (not merely "allowed", which `about:blank` is).
+* **A missing traffic class fails closed** instead of throwing inside a WebView callback.
+* **A lost renderer process now destroys the dead WebView and attaches a fresh one** on the start page
+  (the previous code reloaded into the dead view, which shows nothing). A dead sign-in window or hidden
+  pop-up is simply closed.
+* **A restored session is verified synchronously** before it can be displayed (previously: on the first
+  watchdog tick, up to one second later).
+* **The network-layer check asks the document question for main-frame requests** instead of the
+  sub-resource question for everything.
+* **New tests:** `UrlPolicyFuzzTest` (seeded, 40,000 mutated URLs x 3 traffic classes, invariants rather
+  than expectations - kills the six policy mutants tried in the review), `PolicyConfigTest`, 20 new table
+  rows, and a source invariant for the renderer-loss path. JVM suite: 2397 tests.
+
 # Release notes - Arena WebView (Locked) 1.1.0
 
 Second build of the locked-down WebView wrapper for **https://arena.ai/**. It adds **sign-in with a

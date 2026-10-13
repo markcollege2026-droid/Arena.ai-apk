@@ -10,5 +10,6 @@
     <string name="overlay_footer">This app only opens arena.ai, the first-party Arena services listed in the README, and the Google account pages shown while you sign in. Nothing is sent anywhere else.</string>
     <string name="auth_window_title">Sign in</string>
     <string name="auth_window_close">Close</string>
+    <string name="renderer_restarted">The page stopped responding and was restarted.</string>
     <string name="auth_window_footer">Sign-in runs inside this app. No system browser is opened, and this window can only display Arena.ai and Google sign-in pages.</string>
 </resources>
