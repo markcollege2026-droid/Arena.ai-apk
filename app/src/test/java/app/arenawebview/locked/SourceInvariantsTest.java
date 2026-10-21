@@ -179,10 +179,10 @@ public class SourceInvariantsTest {
                 sources.contains("super.startActivity"));
         // File pickers for uploads are permitted: startActivityForResult is only used there.
         // No other call site may start an activity.
-        // One occurrence is the method declaration, one is the call site in onFileChooserRequested.
+        // Occurrences: two method declarations (with/without Bundle) + one call site in onFileChooserRequested.
         int startActivityForResultCount = count(sources, "startActivityForResult(");
-        assertTrue("startActivityForResult is only used for file chooser intents (declaration + one call site)",
-                startActivityForResultCount == 2);
+        assertTrue("startActivityForResult is only used for file chooser intents (two decls + one call site)",
+                startActivityForResultCount == 3);
         assertTrue("startActivityForResult is in onFileChooserRequested",
                 sources.contains("onFileChooserRequested")
                         && sources.contains("startActivityForResult(intent, requestCode)"));
