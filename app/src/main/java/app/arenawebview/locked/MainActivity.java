@@ -1036,7 +1036,9 @@ public class MainActivity extends Activity implements GuardHost {
         if (intent == null) {
             return;
         }
-        startActivityForResult(intent, requestCode);
+        // Bypass the overridden startActivityForResult (which blocks external intents)
+        // so the file chooser actually launches inside the app's task.
+        super.startActivityForResult(intent, requestCode);
     }
 
     @Override
