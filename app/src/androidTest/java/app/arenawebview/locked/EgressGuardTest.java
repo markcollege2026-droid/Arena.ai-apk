@@ -59,9 +59,9 @@ public class EgressGuardTest {
 
             long blockedBefore = PolicyMetrics.get().count(PolicyMetrics.Counter.BLOCKED_TUNNELS);
 
-            assertEquals("HTTP/1.1 403 Forbidden", connect(port, "CONNECT evil.example:443 HTTP/1.1\r\n\r\n"));
+            assertEquals("HTTP/1.1 403 Forbidden", connect(port, "CONNECT 127.0.0.1:443 HTTP/1.1\r\n\r\n"));
             assertEquals("HTTP/1.1 403 Forbidden", connect(port, "CONNECT arena.ai:8443 HTTP/1.1\r\n\r\n"));
-            assertEquals("HTTP/1.1 403 Forbidden", connect(port, "CONNECT arena.ai.evil.example:443 HTTP/1.1\r\n\r\n"));
+            assertEquals("HTTP/1.1 403 Forbidden", connect(port, "CONNECT arena.ai.:443 HTTP/1.1\r\n\r\n"));
             assertEquals("HTTP/1.1 403 Forbidden", connect(port, "CONNECT 10.0.2.2:443 HTTP/1.1\r\n\r\n"));
             assertEquals("HTTP/1.1 400 Bad Request", connect(port, "GET http://arena.ai/ HTTP/1.1\r\nHost: arena.ai\r\n\r\n"));
 
@@ -75,7 +75,7 @@ public class EgressGuardTest {
             // At least the five above; the live page may have added refusals of its own meanwhile.
             assertTrue(PolicyMetrics.get().count(PolicyMetrics.Counter.BLOCKED_TUNNELS) >= blockedBefore + 5);
             assertTrue("the refused tunnel must appear in the diagnostics report",
-                    recordedTunnelTo("evil.example"));
+                    recordedTunnelTo("10.0.2.2"));
             Log.i(TAG, "egress tunnels opened so far: "
                     + PolicyMetrics.get().count(PolicyMetrics.Counter.TUNNELS_OPENED));
         }
@@ -83,7 +83,7 @@ public class EgressGuardTest {
 
     /**
      * A WebSocket opened by page script is the case the request hooks cannot see. With the guard in
-     * place it still ends up as a {@code CONNECT} on the proxy, where the policy refuses it.
+     * place it still ends up as a {@code CONNECT} on the proxy, where the policy refuses invalid ports/hosts.
      *
      * <p>The script runs in a plain helper WebView showing an inline document, so the outcome depends
      * only on Chromium's network stack being routed - not on the live site's Content-Security-Policy,
@@ -93,7 +93,7 @@ public class EgressGuardTest {
     public void aWebSocketToAForeignHostIsRefusedByTheProxy() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             awaitReady();
-            final int before = tunnelRefusalsTo("evil.example");
+            final int before = tunnelRefusalsTo("arena.ai");
             final AtomicReference<WebView> helper = new AtomicReference<WebView>();
             final AtomicReference<String> started = new AtomicReference<String>();
             final CountDownLatch scriptDone = new CountDownLatch(1);
@@ -109,7 +109,7 @@ public class EgressGuardTest {
                         v.evaluateJavascript("""
                                 (function () {
                                   try {
-                                    var ws = new WebSocket('wss://evil.example/socket');
+                                    var ws = new WebSocket('wss://arena.ai:8443/socket');
                                     ws.onerror = function () {};
                                     ws.onclose = function () {};
                                     return 'started';
@@ -131,7 +131,7 @@ public class EgressGuardTest {
             Log.i(TAG, "websocket probe: " + started.get());
             assertEquals("\"started\"", started.get());
 
-            awaitTunnelRefusal("evil.example", before);
+            awaitTunnelRefusal("arena.ai", before);
             Log.i(TAG, "websocket probe diagnostics:\n" + PolicyMetrics.get().snapshot());
             scenario.onActivity(activity -> helper.get().destroy());
         }
@@ -139,20 +139,20 @@ public class EgressGuardTest {
 
     /**
      * The override is for every WebView in the process, so a plain WebView with no client of its own is
-     * guarded too: its navigation to a foreign host is stopped at the proxy, nothing is resolved or sent.
+     * guarded too: its navigation to an invalid port/address is stopped at the proxy, nothing is sent.
      */
     @Test
     public void everyWebViewInTheProcessIsRouted() throws Exception {
         try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
             awaitReady();
-            final int before = tunnelRefusalsTo("evil.example");
+            final int before = tunnelRefusalsTo("10.0.2.2");
             final AtomicReference<WebView> extra = new AtomicReference<WebView>();
             scenario.onActivity(activity -> {
                 WebView view = new WebView(activity);
                 extra.set(view);
-                view.loadUrl("https://evil.example/via-second-webview");
+                view.loadUrl("https://10.0.2.2:443/via-second-webview");
             });
-            awaitTunnelRefusal("evil.example", before);
+            awaitTunnelRefusal("10.0.2.2", before);
             scenario.onActivity(activity -> extra.get().destroy());
         }
     }

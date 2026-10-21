@@ -217,16 +217,30 @@ public class ArenaWebChromeClient extends WebChromeClient {
     }
 
     /**
-     * The system file picker is refused: it launches another app (DocumentsUI/Camera) and would hand a
-     * local file to the WebView, both of which are outside this wrapper's contract. The callback must
-     * still be completed or the page's file input stays in a stuck "pending" state.
+     * Handles {@code <input type="file">} requests for uploading files/attachments to the site.
+     *
+     * <p>The host opens a scoped system document picker for {@code content://} URIs and returns the
+     * user immediately to the main page once a selection is made. If the host cannot open a picker (for
+     * example in a headless test or while the activity is finishing), the callback is completed with
+     * {@code null} so the page's file input never hangs.</p>
      */
     @Override
     public boolean onShowFileChooser(WebView webView, android.webkit.ValueCallback<android.net.Uri[]> filePathCallback,
                                      FileChooserParams fileChooserParams) {
+        boolean handled = false;
+        if (filePathCallback != null) {
+            try {
+                handled = host.onFileChooserRequested(filePathCallback, fileChooserParams);
+            } catch (Throwable t) {
+                Log.w(TAG, "file chooser request failed", t);
+            }
+        }
+        if (handled) {
+            host.metrics().increment(PolicyMetrics.Counter.ALLOWED_FILE_CHOOSERS);
+            return true;
+        }
         host.metrics().increment(PolicyMetrics.Counter.BLOCKED_FILE_CHOOSERS);
         host.onFileChooserBlocked();
-        host.onMessage("File upload is disabled in this app");
         if (filePathCallback != null) {
             try {
                 filePathCallback.onReceiveValue(null);

@@ -63,9 +63,9 @@ public class EscapeAttemptTest {
         }
     }
 
-    /** The file picker would launch DocumentsUI/Camera, so it is intercepted and completed with "no file". */
+    /** The file picker delegates to the host when uploads are handled and completes with null when not. */
     @Test
-    public void fileChooserIsRefused() {
+    public void fileChooserDelegatesToHostAndValidatesContentUris() {
         RecordingGuardHost host = new RecordingGuardHost(ArenaAllowlist.productionConfig());
         ArenaWebChromeClient chrome = new ArenaWebChromeClient(
                 InstrumentationRegistry.getInstrumentation().getTargetContext(), host);
@@ -80,11 +80,30 @@ public class EscapeAttemptTest {
             }
         };
 
+        // 1. When the host handles the file chooser (Activity is present), it takes ownership of the callback.
+        host.allowFileChooser = true;
+        assertTrue(chrome.onShowFileChooser(null, callback, null));
+        assertEquals(1, host.metrics().count(PolicyMetrics.Counter.ALLOWED_FILE_CHOOSERS));
+
+        // Only content:// URIs are accepted from the picker result; file:// URIs are rejected.
+        Intent contentResult = new Intent();
+        contentResult.setData(Uri.parse("content://com.android.providers.media.documents/document/image%3A1"));
+        Uri[] validUris = MainActivity.extractSelectedContentUris(android.app.Activity.RESULT_OK, contentResult);
+        assertNotNull(validUris);
+        assertEquals(1, validUris.length);
+
+        Intent fileSchemeResult = new Intent();
+        fileSchemeResult.setData(Uri.parse("file:///data/data/app.arenawebview.locked/databases/webview.db"));
+        assertNull("file:// URIs must never be accepted for upload",
+                MainActivity.extractSelectedContentUris(android.app.Activity.RESULT_OK, fileSchemeResult));
+
+        // 2. When no activity can handle the picker, the callback is completed with null immediately.
+        host.allowFileChooser = false;
         boolean handled = chrome.onShowFileChooser(null, callback, null);
 
-        assertTrue("the app must claim the file-chooser request (i.e. it was handled, not launched)", handled);
+        assertTrue("the app must claim the file-chooser request", handled);
         assertTrue("the page must not be left waiting", completed[0]);
-        assertNull("no file may ever be handed to the page", received.get(0));
+        assertNull("when declined, null is delivered to the callback", received.get(0));
         assertEquals(1, host.metrics().count(PolicyMetrics.Counter.BLOCKED_FILE_CHOOSERS));
     }
 

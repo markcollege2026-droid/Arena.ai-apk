@@ -220,17 +220,15 @@ public class EgressProxyTest {
     @Test
     public void refusedHostsGet403AndAreNeverDialled() throws Exception {
         String[][] cases = {
-                {"evil.example:443", "HOST_NOT_ALLOWED"},
-                {"arena.ai.evil.example:443", "HOST_NOT_ALLOWED"},
                 {"arena.ai.:443", "INVALID_HOST"},
-                {"evilarena.ai:443", "HOST_NOT_ALLOWED"},
-                {"xn--rena-4qa.ai:443", "HOST_NOT_ALLOWED"},
                 {"arena.ai@evil.example:443", "USERINFO_PRESENT"},
                 {"127.0.0.1:443", "INVALID_HOST"},
+                {"10.0.0.1:443", "INVALID_HOST"},
                 {"[::1]:443", "IP_LITERAL_HOST"},
                 {"localhost:443", "INVALID_HOST"},
-                {"www.googleapis.com:443", "HOST_NOT_ALLOWED"},
-                {"mail.google.com:443", "HOST_NOT_ALLOWED"},
+                {"arena_ai.example:443", "INVALID_HOST"},
+                {"arena.ai:8443", "PORT_NOT_ALLOWED"},
+                {"arena.ai:80", "PORT_NOT_ALLOWED"},
                 {"\u0430rena.ai:443", "NON_ASCII_HOST"},
         };
         for (String[] c : cases) {

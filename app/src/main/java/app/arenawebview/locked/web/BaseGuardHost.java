@@ -97,8 +97,20 @@ public abstract class BaseGuardHost implements GuardHost {
     }
 
     @Override
+    public void onDownloadRequested(String url, String userAgent, String contentDisposition,
+                                    String mimeType, long contentLength) {
+        Log.i(TAG, "download requested");
+    }
+
+    @Override
     public void onDownloadBlocked(String url, String mimeType) {
         Log.i(TAG, "download blocked");
+    }
+
+    @Override
+    public boolean onFileChooserRequested(android.webkit.ValueCallback<android.net.Uri[]> filePathCallback,
+                                          WebChromeClient.FileChooserParams fileChooserParams) {
+        return false;
     }
 
     @Override

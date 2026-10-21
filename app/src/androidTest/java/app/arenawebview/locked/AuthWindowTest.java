@@ -130,4 +130,23 @@ public class AuthWindowTest {
         assertTrue("the report must account for sign-in windows: " + report,
                 report.contains(PolicyMetrics.Counter.SIGN_IN_WINDOWS.name()));
     }
+
+    @Test
+    public void signInWindowReturnsToMainPageWhenRedirectLandsOnRoot() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                WebView popup = new WebView(activity);
+                activity.onSignInWindowRequested(popup, SIGN_IN_URL);
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.auth_window).getVisibility());
+
+                // An OAuth callback URL keeps the sign-in window open so the callback JS can finish.
+                activity.onSignInWindowNavigated("https://arena.ai/auth/callback?code=abc123");
+                assertEquals(View.VISIBLE, activity.findViewById(R.id.auth_window).getVisibility());
+
+                // Once the flow lands back on the root main page, the sign-in window closes automatically.
+                activity.onSignInWindowNavigated("https://arena.ai/");
+                assertEquals(View.GONE, activity.findViewById(R.id.auth_window).getVisibility());
+            });
+        }
+    }
 }

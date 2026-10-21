@@ -105,7 +105,8 @@ public class WebViewSettingsTest {
             public void run() {
                 WebSettings settings = settings();
                 assertFalse("no file:// access", settings.getAllowFileAccess());
-                assertFalse("no content:// access", settings.getAllowContentAccess());
+                assertTrue("content:// access enabled for user-selected file uploads",
+                        settings.getAllowContentAccess());
                 assertFalse("no cross-origin access from file URLs",
                         settings.getAllowFileAccessFromFileURLs());
                 assertFalse("no universal access from file URLs",

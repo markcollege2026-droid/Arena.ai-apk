@@ -176,21 +176,27 @@ public class SourceInvariantsTest {
     public void theAppNeverStartsAnotherActivity() throws Exception {
         String sources = allMainSources();
         assertFalse("startActivity must never be delegated to the platform",
-                sources.contains("super.startActivity"));
-        assertFalse("no call sites may start an activity",
-                sources.contains(".startActivity(") || sources.contains(".startActivityForResult("));
+                sources.contains("super.startActivity("));
+        assertFalse("no call sites may call startActivity",
+                sources.contains(".startActivity("));
+        assertEquals("only the scoped file picker in onFileChooserRequested may call super.startActivityForResult",
+                1, count(sources, ".startActivityForResult("));
+        assertEquals(1, count(sources, "super.startActivityForResult("));
 
         String main = code("app/arenawebview/locked/MainActivity.java");
         assertTrue(main.contains("public void startActivity(Intent intent)"));
         assertTrue(main.contains("public void startActivityForResult(Intent intent, int requestCode)"));
         assertTrue(main.contains("blockExternalIntent"));
+        assertTrue(main.contains("Intent.ACTION_GET_CONTENT"));
+        assertTrue(main.contains("Intent.CATEGORY_OPENABLE"));
     }
 
     @Test
     public void webViewIsConfiguredStrictly() throws Exception {
         String hardening = code("app/arenawebview/locked/web/WebViewHardening.java");
         assertTrue(hardening.contains("setAllowFileAccess(false)"));
-        assertTrue(hardening.contains("setAllowContentAccess(false)"));
+        assertTrue("content:// access is enabled so user-selected files can be uploaded",
+                hardening.contains("setAllowContentAccess(true)"));
         assertTrue(hardening.contains("setAllowFileAccessFromFileURLs(false)"));
         assertTrue(hardening.contains("setAllowUniversalAccessFromFileURLs(false)"));
         assertTrue(hardening.contains("MIXED_CONTENT_NEVER_ALLOW"));
@@ -203,7 +209,8 @@ public class SourceInvariantsTest {
                         && hardening.contains("webView.setWebChromeClient(chromeClient)"));
 
         assertFalse("file access must never be enabled", hardening.contains("setAllowFileAccess(true)"));
-        assertFalse("content access must never be enabled", hardening.contains("setAllowContentAccess(true)"));
+        assertFalse("content access must not be disabled (uploads require it)",
+                hardening.contains("setAllowContentAccess(false)"));
         assertFalse(hardening.contains("setAllowUniversalAccessFromFileURLs(true)"));
         assertFalse("JavaScript is required by the real site", hardening.contains("setJavaScriptEnabled(false)"));
         assertFalse("mixed content must never be allowed",
@@ -222,7 +229,9 @@ public class SourceInvariantsTest {
     public void chromeClientRefusesEscapes() throws Exception {
         String chrome = code("app/arenawebview/locked/web/ArenaWebChromeClient.java");
         assertTrue("the file picker must be intercepted", chrome.contains("onShowFileChooser"));
-        assertTrue("the file picker callback must be completed without a file",
+        assertTrue("the file picker delegates to the host",
+                chrome.contains("host.onFileChooserRequested(filePathCallback, fileChooserParams)"));
+        assertTrue("the file picker callback must be completed with null when not handled",
                 chrome.contains("filePathCallback.onReceiveValue(null)"));
         assertTrue("media capture must be denied", chrome.contains("request.deny()"));
         assertTrue("geolocation must be denied", chrome.contains("callback.invoke(origin, false, false)"));
@@ -233,8 +242,10 @@ public class SourceInvariantsTest {
     public void downloadsAreRefused() throws Exception {
         String hardening = code("app/arenawebview/locked/web/WebViewHardening.java");
         assertTrue(hardening.contains("setDownloadListener"));
-        assertFalse("the app must not use the platform download manager",
-                allMainSources().contains("DownloadManager"));
+        assertTrue("every download URL must be checked against the policy first",
+                hardening.contains("host.policy().evaluateRequest(url)"));
+        assertTrue(hardening.contains("host.onDownloadRequested("));
+        assertTrue(hardening.contains("host.onDownloadBlocked("));
         assertFalse("nothing may be shared with another app", allMainSources().contains("ACTION_SEND"));
     }
 

@@ -70,7 +70,9 @@ public final class WebViewHardening {
         settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
+        // Content URI access is enabled so the WebView can read files explicitly chosen by the user
+        // through the system document picker for uploads; direct file:// access remains off.
+        settings.setAllowContentAccess(true);
 
         // --- local-file and mixed-content lockdown ------------------------------------------------
         settings.setAllowFileAccessFromFileURLs(false);
@@ -173,8 +175,9 @@ public final class WebViewHardening {
     }
 
     /**
-     * Refuses every download: nothing is ever handed to DownloadManager or an external browser.
-     * Package-private so an instrumented test can drive it directly.
+     * Polices downloads: valid {@code https://}, {@code data:} and {@code blob:} downloads are handed
+     * to the host to be saved in-app without opening a browser; unsafe schemes or invalid URLs are
+     * refused and recorded. Package-private so an instrumented test can drive it directly.
      */
     static final class BlockingDownloadListener implements DownloadListener {
 
@@ -187,16 +190,37 @@ public final class WebViewHardening {
         @Override
         public void onDownloadStart(String url, String userAgent, String contentDisposition,
                                     String mimeType, long contentLength) {
-            String hostName = "";
-            try {
-                Uri uri = Uri.parse(url);
-                hostName = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
-            } catch (Throwable ignored) {
-                // reporting only
+            PolicyResult result = host.policy().evaluateRequest(url);
+            if (!result.isAllowed() || !isDownloadableScheme(url)) {
+                String hostName = result.canonicalHost();
+                if (hostName.isEmpty() && url != null) {
+                    try {
+                        Uri uri = Uri.parse(url);
+                        hostName = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+                    } catch (Throwable ignored) {
+                        // reporting only
+                    }
+                }
+                app.arenawebview.locked.policy.BlockReason reason = result.isAllowed()
+                        ? app.arenawebview.locked.policy.BlockReason.UNSUPPORTED_SCHEME
+                        : result.reason();
+                host.metrics().increment(PolicyMetrics.Counter.BLOCKED_DOWNLOADS);
+                host.metrics().recordBlock(reason, hostName, url);
+                host.onDownloadBlocked(url, mimeType);
+                return;
             }
-            host.metrics().increment(PolicyMetrics.Counter.BLOCKED_DOWNLOADS);
-            host.metrics().recordBlock(app.arenawebview.locked.policy.BlockReason.CAPABILITY_DISABLED, hostName, url);
-            host.onDownloadBlocked(url, mimeType);
+            host.metrics().increment(PolicyMetrics.Counter.ALLOWED_DOWNLOADS);
+            host.onDownloadRequested(url, userAgent, contentDisposition, mimeType, contentLength);
+        }
+
+        private static boolean isDownloadableScheme(String url) {
+            if (url == null) {
+                return false;
+            }
+            String trimmed = url.trim().toLowerCase(Locale.ROOT);
+            return trimmed.startsWith("https://")
+                    || trimmed.startsWith("data:")
+                    || trimmed.startsWith("blob:");
         }
     }
 }

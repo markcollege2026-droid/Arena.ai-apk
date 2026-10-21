@@ -129,10 +129,16 @@ public class ArenaWebViewClient extends WebViewClient {
         String url = uri.toString();
         // The network layer sees every hop of every load, so it must ask the right question for each: a
         // main-frame request *is* the page (an asset host, a blob or a data URL must be refused here even
-        // if an earlier hook were ever skipped); anything else is traffic inside an approved page.
-        PolicyResult result = request.isForMainFrame()
-                ? host.policy().evaluateNavigation(url)
-                : host.policy().evaluateRequest(url);
+        // if an earlier hook were ever skipped); an embedded frame (Sec-Fetch-Dest: iframe/frame/embed)
+        // must pass the embedded-document rules; sub-resources inside an approved page use evaluateRequest.
+        PolicyResult result;
+        if (request.isForMainFrame()) {
+            result = host.policy().evaluateNavigation(url);
+        } else if (isSubdocumentRequest(request)) {
+            result = host.policy().evaluateSubdocument(url);
+        } else {
+            result = host.policy().evaluateRequest(url);
+        }
         if (result.isAllowed()) {
             // null == "carry on normally". This is what keeps cookies, range requests, streaming media
             // and WebView's own cache working: nothing is proxied, rewritten or buffered.
@@ -354,6 +360,31 @@ public class ArenaWebViewClient extends WebViewClient {
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    private static boolean isSubdocumentRequest(WebResourceRequest request) {
+        try {
+            java.util.Map<String, String> headers = request.getRequestHeaders();
+            if (headers == null || headers.isEmpty()) {
+                return false;
+            }
+            for (java.util.Map.Entry<String, String> entry : headers.entrySet()) {
+                if ("Sec-Fetch-Dest".equalsIgnoreCase(entry.getKey())) {
+                    String dest = entry.getValue();
+                    if (dest == null) {
+                        return false;
+                    }
+                    return "iframe".equalsIgnoreCase(dest)
+                            || "frame".equalsIgnoreCase(dest)
+                            || "embed".equalsIgnoreCase(dest)
+                            || "object".equalsIgnoreCase(dest)
+                            || "fencedframe".equalsIgnoreCase(dest);
+                }
+            }
+        } catch (Throwable ignored) {
+            // Fall through to standard sub-resource evaluation.
+        }
+        return false;
     }
 
     private static void postToUi(WebView view, Runnable action) {
