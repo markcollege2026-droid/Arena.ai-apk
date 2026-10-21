@@ -198,4 +198,5 @@ public final class WebViewHardening {
             host.metrics().increment(PolicyMetrics.Counter.ALLOWED_DOWNLOADS);
             host.onDownloadPermitted(url, userAgent, contentDisposition, mimeType, contentLength);
         }
-    }}
+    }
+}
