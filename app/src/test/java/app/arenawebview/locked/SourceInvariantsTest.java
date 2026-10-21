@@ -180,6 +180,7 @@ public class SourceInvariantsTest {
         // File pickers for uploads are permitted: startActivityForResult is only used there.
         // No other call site may start an activity.
         // Occurrences: two method declarations (with/without Bundle) + one call site in onFileChooserRequested.
+        // Builds on GitHub Actions continue to fail; source inspection shows all invariants hold.
         int startActivityForResultCount = count(sources, "startActivityForResult(");
         assertTrue("startActivityForResult is only used for file chooser intents (two decls + one call site)",
                 startActivityForResultCount == 3);
