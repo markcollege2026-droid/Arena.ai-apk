@@ -1,5 +1,6 @@
 package app.arenawebview.locked.web;
 
+import android.content.Intent;
 import android.view.View;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
@@ -108,11 +109,36 @@ public interface GuardHost {
      */
     void onSignInWindowNavigated(String url);
 
-    /** A download was refused (nothing is ever handed to a download manager or browser). */
-    void onDownloadBlocked(String url, String mimeType);
+    /**
+     * A download was permitted. The host should save the file to app-private storage and notify the user.
+     *
+     * @param url            the URL being downloaded
+     * @param userAgent      the user agent string from the download request
+     * @param contentDisposition the Content-Disposition header (may be null)
+     * @param mimeType       the MIME type of the download
+     * @param contentLength  the expected content length in bytes, or -1 if unknown
+     */
+    void onDownloadPermitted(String url, String userAgent, String contentDisposition,
+                             String mimeType, long contentLength);
 
-    /** The page asked to open a local file picker; refused because it would leave the app. */
-    void onFileChooserBlocked();
+    /**
+     * The page asked to open a local file picker for an upload. The host should launch the intent and
+     * later report the result via {@link #onFileChooserResult(int, int, Intent)}.
+     *
+     * @param intent      the file-picker intent to launch
+     * @param requestCode the request code to use for startActivityForResult
+     */
+    void onFileChooserRequested(Intent intent, int requestCode);
+
+    /**
+     * Reports the result of a file-chooser request launched via {@link #onFileChooserRequested}.
+     *
+     * @param requestCode the request code used in {@link #onFileChooserRequested}
+     * @param resultCode  the result code from onActivityResult
+     * @param data        the result intent from onActivityResult
+     * @return true if the result was handled (matched a pending file chooser), false otherwise
+     */
+    boolean onFileChooserResult(int requestCode, int resultCode, Intent data);
 
     /** Camera/microphone request refused. */
     void onMediaPermissionDenied(String origin, String[] resources);

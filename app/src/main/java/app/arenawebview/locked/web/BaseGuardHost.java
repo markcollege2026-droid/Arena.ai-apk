@@ -1,5 +1,6 @@
 package app.arenawebview.locked.web;
 
+import android.content.Intent;
 import android.util.Log;
 import android.view.View;
 import android.webkit.JsPromptResult;
@@ -97,13 +98,19 @@ public abstract class BaseGuardHost implements GuardHost {
     }
 
     @Override
-    public void onDownloadBlocked(String url, String mimeType) {
-        Log.i(TAG, "download blocked");
+    public void onDownloadPermitted(String url, String userAgent, String contentDisposition,
+                                    String mimeType, long contentLength) {
+        Log.i(TAG, "download permitted: " + url);
     }
 
     @Override
-    public void onFileChooserBlocked() {
-        Log.i(TAG, "file chooser blocked");
+    public void onFileChooserRequested(Intent intent, int requestCode) {
+        Log.i(TAG, "file chooser requested but not handled by host");
+    }
+
+    @Override
+    public boolean onFileChooserResult(int requestCode, int resultCode, Intent data) {
+        return false;
     }
 
     @Override

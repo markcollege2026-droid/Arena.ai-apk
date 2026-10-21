@@ -30,6 +30,9 @@ import app.arenawebview.locked.web.RecordingGuardHost;
 /**
  * Attempts to leave the app by every route the Android WebView offers, and checks that each one is
  * refused. These are the "app escape" tests: none of them may open another application.
+ *
+ * <p>File pickers for uploads are now permitted, so the escape test verifies that everything else
+ * (browser, dialer, mailto, Play Store, share sheet) is still refused.</p>
  */
 @RunWith(AndroidJUnit4.class)
 public class EscapeAttemptTest {
@@ -63,9 +66,9 @@ public class EscapeAttemptTest {
         }
     }
 
-    /** The file picker would launch DocumentsUI/Camera, so it is intercepted and completed with "no file". */
+    /** The file picker is permitted for uploads: it returns a chosen URI to the page instead of blocking. */
     @Test
-    public void fileChooserIsRefused() {
+    public void fileChooserIsPermitted() {
         RecordingGuardHost host = new RecordingGuardHost(ArenaAllowlist.productionConfig());
         ArenaWebChromeClient chrome = new ArenaWebChromeClient(
                 InstrumentationRegistry.getInstrumentation().getTargetContext(), host);
@@ -82,10 +85,11 @@ public class EscapeAttemptTest {
 
         boolean handled = chrome.onShowFileChooser(null, callback, null);
 
-        assertTrue("the app must claim the file-chooser request (i.e. it was handled, not launched)", handled);
+        assertTrue("the app must claim the file-chooser request", handled);
         assertTrue("the page must not be left waiting", completed[0]);
-        assertNull("no file may ever be handed to the page", received.get(0));
-        assertEquals(1, host.metrics().count(PolicyMetrics.Counter.BLOCKED_FILE_CHOOSERS));
+        assertNull("no file chosen yet, so null is returned", received.get(0));
+        assertEquals(1, host.metrics().count(PolicyMetrics.Counter.ALLOWED_FILE_CHOOSERS));
+        assertEquals(0, host.metrics().count(PolicyMetrics.Counter.BLOCKED_FILE_CHOOSERS));
     }
 
     /** Geolocation is refused in-process, without ever prompting the user or the OS. */

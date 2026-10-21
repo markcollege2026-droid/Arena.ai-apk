@@ -15,6 +15,7 @@ import android.webkit.WebView;
 
 import java.util.Locale;
 
+import app.arenawebview.locked.policy.BlockReason;
 import app.arenawebview.locked.policy.PolicyConfig;
 import app.arenawebview.locked.policy.PolicyMetrics;
 import app.arenawebview.locked.policy.PolicyResult;
@@ -126,7 +127,7 @@ public final class WebViewHardening {
         webView.setWebViewClient(client);
         webView.setWebChromeClient(chromeClient);
         webView.setBackgroundColor(android.graphics.Color.BLACK);
-        webView.setDownloadListener(new BlockingDownloadListener(host));
+        webView.setDownloadListener(new PermittingDownloadListener(host));
         // There is deliberately no Java-to-JavaScript bridge anywhere in this project: a bridge is the
         // classic WebView remote-code-execution path, and this wrapper needs none (SourceInvariantsTest
         // fails the build if one is ever added).
@@ -173,14 +174,14 @@ public final class WebViewHardening {
     }
 
     /**
-     * Refuses every download: nothing is ever handed to DownloadManager or an external browser.
-     * Package-private so an instrumented test can drive it directly.
+     * Permits downloads: the user may download files from the WebView, saved to app-private storage.
+     * Nothing is ever handed to a download manager or external browser.
      */
-    static final class BlockingDownloadListener implements DownloadListener {
+    static final class PermittingDownloadListener implements DownloadListener {
 
         private final GuardHost host;
 
-        BlockingDownloadListener(GuardHost host) {
+        PermittingDownloadListener(GuardHost host) {
             this.host = host;
         }
 
@@ -194,9 +195,7 @@ public final class WebViewHardening {
             } catch (Throwable ignored) {
                 // reporting only
             }
-            host.metrics().increment(PolicyMetrics.Counter.BLOCKED_DOWNLOADS);
-            host.metrics().recordBlock(app.arenawebview.locked.policy.BlockReason.CAPABILITY_DISABLED, hostName, url);
-            host.onDownloadBlocked(url, mimeType);
+            host.metrics().increment(PolicyMetrics.Counter.ALLOWED_DOWNLOADS);
+            host.onDownloadPermitted(url, userAgent, contentDisposition, mimeType, contentLength);
         }
-    }
-}
+    }}

@@ -1,5 +1,6 @@
 package app.arenawebview.locked.web;
 
+import android.content.Intent;
 import android.webkit.WebView;
 
 import java.util.ArrayList;
@@ -29,12 +30,15 @@ public final class RecordingGuardHost extends BaseGuardHost {
     public String lastSignInWindowUrl;
     public String lastSignInWindowClosedReason;
     public String lastSignInWindowNavigated;
-    public String lastDownloadBlocked;
+    public String lastDownloadPermitted;
     public String lastError;
     public String lastRecoveryReason;
-    public int fileChooserBlocks;
+    public int fileChooserRequests;
+    public int fileChooserResults;
     public int sslBlocks;
     public int fullscreenRequests;
+    public Intent lastFileChooserIntent;
+    public int lastFileChooserRequestCode;
 
     public RecordingGuardHost(PolicyConfig policy) {
         this.policy = policy;
@@ -100,15 +104,25 @@ public final class RecordingGuardHost extends BaseGuardHost {
     }
 
     @Override
-    public void onDownloadBlocked(String url, String mimeType) {
-        lastDownloadBlocked = url;
-        event("download blocked " + url);
+    public void onDownloadPermitted(String url, String userAgent, String contentDisposition,
+                                    String mimeType, long contentLength) {
+        lastDownloadPermitted = url;
+        event("download permitted " + url);
     }
 
     @Override
-    public void onFileChooserBlocked() {
-        fileChooserBlocks++;
-        event("file chooser blocked");
+    public void onFileChooserRequested(Intent intent, int requestCode) {
+        fileChooserRequests++;
+        lastFileChooserIntent = intent;
+        lastFileChooserRequestCode = requestCode;
+        event("file chooser requested");
+    }
+
+    @Override
+    public boolean onFileChooserResult(int requestCode, int resultCode, Intent data) {
+        fileChooserResults++;
+        event("file chooser result requestCode=" + requestCode + " resultCode=" + resultCode);
+        return true;
     }
 
     @Override

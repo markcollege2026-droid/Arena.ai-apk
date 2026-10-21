@@ -35,6 +35,13 @@ import android.widget.Toast;
 
 import java.util.Locale;
 
+import android.os.Environment;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import app.arenawebview.locked.policy.ArenaAllowlist;
 import app.arenawebview.locked.policy.BackNavigator;
 import app.arenawebview.locked.policy.PolicyConfig;
@@ -608,6 +615,11 @@ public class MainActivity extends Activity implements GuardHost {
      * including the system browser, share sheets, the Play Store and download managers.
      */
     private void blockExternalIntent(Intent intent) {
+        if (isFileChooserIntent(intent)) {
+            // File pickers for uploads are permitted: they run inside the app's task and
+            // only hand the user-chosen file back to the WebView.
+            return;
+        }
         metrics.increment(PolicyMetrics.Counter.BLOCKED_EXTERNAL_INTENTS);
         String target = "";
         if (intent != null) {
@@ -621,6 +633,18 @@ public class MainActivity extends Activity implements GuardHost {
         metrics.recordBlock(app.arenawebview.locked.policy.BlockReason.EXTERNAL_INTENT_BLOCKED, "", target);
         Log.i(TAG, "blocked attempt to start another activity: " + target);
         onMessage("This app does not open other apps");
+    }
+
+    /** True when the intent is a file picker for an upload (GET_CONTENT / OPEN_DOCUMENT). */
+    private static boolean isFileChooserIntent(Intent intent) {
+        if (intent == null || intent.getAction() == null) {
+            return false;
+        }
+        String action = intent.getAction();
+        return Intent.ACTION_GET_CONTENT.equals(action)
+                || Intent.ACTION_OPEN_DOCUMENT.equals(action)
+                || Intent.ACTION_OPEN_DOCUMENT_TREE.equals(action)
+                || Intent.ACTION_CREATE_DOCUMENT.equals(action);
     }
 
     private void recordIncomingIntent(Intent intent) {
@@ -902,13 +926,125 @@ public class MainActivity extends Activity implements GuardHost {
     }
 
     @Override
-    public void onDownloadBlocked(String url, String mimeType) {
-        onMessage("Downloads are disabled in this app");
+    public void onDownloadPermitted(String url, String userAgent, String contentDisposition,
+                                    String mimeType, long contentLength) {
+        metrics.increment(PolicyMetrics.Counter.ALLOWED_DOWNLOADS);
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                downloadFile(url, userAgent, contentDisposition, mimeType, contentLength);
+            }
+        }).start();
+    }
+
+    /** Downloads a file to app-private storage, reusing the WebView's cookies for auth. */
+    private void downloadFile(String url, String userAgent, String contentDisposition,
+                              String mimeType, long contentLength) {
+        HttpURLConnection connection = null;
+        InputStream input = null;
+        FileOutputStream output = null;
+        try {
+            URL downloadUrl = new URL(url);
+            connection = (HttpURLConnection) downloadUrl.openConnection();
+            connection.setRequestProperty("User-Agent", userAgent == null ? "" : userAgent);
+            connection.setRequestProperty("Accept", mimeType == null ? "*/*" : mimeType);
+            // Reuse the WebView's cookie store so authenticated downloads work.
+            String cookie = CookieManager.getInstance().getCookie(url);
+            if (cookie != null && !cookie.isEmpty()) {
+                connection.setRequestProperty("Cookie", cookie);
+            }
+            connection.setConnectTimeout(30_000);
+            connection.setReadTimeout(30_000);
+            connection.connect();
+
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                Log.w(TAG, "download failed: " + connection.getResponseCode()
+                        + " for " + url);
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        onMessage("Download failed: " + connection.getResponseCode());
+                    }
+                });
+                return;
+            }
+
+            input = connection.getInputStream();
+
+            // Determine the file name.
+            String fileName = null;
+            if (contentDisposition != null) {
+                int idx = contentDisposition.indexOf("filename=");
+                if (idx >= 0) {
+                    fileName = contentDisposition.substring(idx + 9).trim();
+                    if (fileName.startsWith(""") && fileName.endsWith(""")) {
+                        fileName = fileName.substring(1, fileName.length() - 1);
+                    }
+                }
+            }
+            if (fileName == null || fileName.isEmpty()) {
+                int lastSlash = url.lastIndexOf('/');
+                fileName = lastSlash >= 0 ? url.substring(lastSlash + 1) : "download";
+            }
+            if (fileName.isEmpty()) {
+                fileName = "download";
+            }
+
+            File downloadDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (downloadDir == null) {
+                downloadDir = getCacheDir();
+            }
+            File outputFile = new File(downloadDir, fileName);
+
+            output = new FileOutputStream(outputFile);
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) > 0) {
+                output.write(buffer, 0, count);
+            }
+            output.flush();
+
+            final String savedTo = outputFile.getAbsolutePath();
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    onMessage("Download saved to " + savedTo);
+                }
+            });
+        } catch (Throwable t) {
+            Log.w(TAG, "download failed", t);
+            final String error = t.getMessage();
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    onMessage("Download failed: " + (error == null ? t.getClass().getSimpleName() : error));
+                }
+            });
+        } finally {
+            try {
+                if (output != null) output.close();
+            } catch (Throwable ignored) { }
+            try {
+                if (input != null) input.close();
+            } catch (Throwable ignored) { }
+            if (connection != null) connection.disconnect();
+        }
     }
 
     @Override
-    public void onFileChooserBlocked() {
-        // Message already sent by the chrome client.
+    public void onFileChooserRequested(Intent intent, int requestCode) {
+        if (intent == null) {
+            return;
+        }
+        startActivityForResult(intent, requestCode);
+    }
+
+    @Override
+    public boolean onFileChooserResult(int requestCode, int resultCode, Intent data) {
+        if (chromeClient != null && chromeClient.onFileChooserResult(requestCode, resultCode, data)) {
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -970,6 +1106,15 @@ public class MainActivity extends Activity implements GuardHost {
                         (dialog, which) -> result.confirm(input.getText().toString()))
                 .setNegativeButton(android.R.string.cancel, (dialog, which) -> result.cancel())
                 .show();
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (chromeClient != null && chromeClient.onFileChooserResult(requestCode, resultCode, data)) {
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     private boolean canShowDialogs() {

@@ -1,6 +1,8 @@
 package app.arenawebview.locked.web;
 
 import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Message;
 import android.util.Log;
 import android.view.View;
@@ -9,6 +11,7 @@ import android.webkit.GeolocationPermissions;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 
@@ -28,9 +31,9 @@ import app.arenawebview.locked.policy.PolicyMetrics;
  *       served by a hidden WebView whose URL is re-validated and then (if allowed) loaded in the single
  *       visible WebView - so the user never leaves the app's one WebView and a pop-up can never
  *       escape it.</li>
- *   <li>Nothing may hand work to another Android app. The file picker is refused (it would launch
- *       DocumentsUI), camera/microphone and geolocation prompts are refused until a build opts in
- *       (see README).</li>
+ *   <li>File pickers are permitted for uploads: the page can ask the user to pick a file, and the
+ *       chosen file URI is handed back to the page. The file picker runs inside the app's task and
+ *       is the only second surface that may appear.</li>
  * </ol>
  */
 public class ArenaWebChromeClient extends WebChromeClient {
@@ -40,9 +43,15 @@ public class ArenaWebChromeClient extends WebChromeClient {
     /** A page that opens more hidden windows than this is refused outright (memory/DoS guard). */
     private static final int MAX_LIVE_POPUPS = 3;
 
+    /** Request code for the file-picker activity launched from {@link #onShowFileChooser}. */
+    private static final int REQUEST_CODE_FILE_CHOOSER = 0x1001;
+
     private final Context context;
     private final GuardHost host;
     private final List<WebView> livePopups = new ArrayList<WebView>();
+
+    /** The pending file-chooser callback, or null when no file picker is in progress. */
+    private ValueCallback<Uri[]> pendingFileChooserCallback;
 
     public ArenaWebChromeClient(Context context, GuardHost host) {
         if (context == null || host == null) {
@@ -154,17 +163,6 @@ public class ArenaWebChromeClient extends WebChromeClient {
         }
     }
 
-    private void pruneDeadPopups() {
-        synchronized (livePopups) {
-            for (int i = livePopups.size() - 1; i >= 0; i--) {
-                WebView popup = livePopups.get(i);
-                if (popup == null) {
-                    livePopups.remove(i);
-                }
-            }
-        }
-    }
-
     // ---------------------------------------------------------------------------------------------
     // JavaScript dialogs (kept working: they are in-app dialogs, not escapes)
     // ---------------------------------------------------------------------------------------------
@@ -217,23 +215,52 @@ public class ArenaWebChromeClient extends WebChromeClient {
     }
 
     /**
-     * The system file picker is refused: it launches another app (DocumentsUI/Camera) and would hand a
-     * local file to the WebView, both of which are outside this wrapper's contract. The callback must
-     * still be completed or the page's file input stays in a stuck "pending" state.
+     * Permits the system file picker for uploads. The page can ask the user to pick a file; the
+     * chosen URI is handed back to the page via {@link #onFileChooserResult}. The picker runs inside
+     * the app's task and does not hand control to a general browser.
+     *
+     * <p>The callback must still be completed even when the user cancels, or the page's file input
+     * stays in a stuck "pending" state.</p>
      */
     @Override
-    public boolean onShowFileChooser(WebView webView, android.webkit.ValueCallback<android.net.Uri[]> filePathCallback,
+    public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
                                      FileChooserParams fileChooserParams) {
-        host.metrics().increment(PolicyMetrics.Counter.BLOCKED_FILE_CHOOSERS);
-        host.onFileChooserBlocked();
-        host.onMessage("File upload is disabled in this app");
-        if (filePathCallback != null) {
-            try {
-                filePathCallback.onReceiveValue(null);
-            } catch (Throwable t) {
-                Log.w(TAG, "file chooser callback failed", t);
-            }
+        // Complete any previous pending chooser so we never leak a callback.
+        if (pendingFileChooserCallback != null) {
+            pendingFileChooserCallback.onReceiveValue(null);
+            pendingFileChooserCallback = null;
         }
+        pendingFileChooserCallback = filePathCallback;
+
+        Intent intent = fileChooserParams == null ? null : fileChooserParams.createIntent();
+        if (intent == null) {
+            host.metrics().increment(PolicyMetrics.Counter.BLOCKED_FILE_CHOOSERS);
+            host.onMessage("File upload is unavailable");
+            if (filePathCallback != null) {
+                filePathCallback.onReceiveValue(null);
+            }
+            return true;
+        }
+
+        host.metrics().increment(PolicyMetrics.Counter.ALLOWED_FILE_CHOOSERS);
+        host.onFileChooserRequested(intent, REQUEST_CODE_FILE_CHOOSER);
+        return true;
+    }
+
+    /**
+     * Reports the result of a file-chooser request launched via
+     * {@link GuardHost#onFileChooserRequested(Intent, int)}. The activity should call this from its
+     * {@code onActivityResult}.
+     *
+     * @return true if the result was handled (matched a pending file chooser), false otherwise.
+     */
+    public boolean onFileChooserResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode != REQUEST_CODE_FILE_CHOOSER || pendingFileChooserCallback == null) {
+            return false;
+        }
+        Uri[] results = (data == null) ? null : FileChooserParams.parseResult(resultCode, data);
+        pendingFileChooserCallback.onReceiveValue(results);
+        pendingFileChooserCallback = null;
         return true;
     }
 

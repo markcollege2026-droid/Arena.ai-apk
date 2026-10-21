@@ -36,10 +36,14 @@ public final class PolicyMetrics {
         ROUTED_POPUPS,
         /** Sign-in windows opened inside the app for a verified sign-in page (never a system browser). */
         SIGN_IN_WINDOWS,
+        /** Downloads the user requested (saved to app-private storage). */
+        ALLOWED_DOWNLOADS,
         /** Download attempts refused (the app never hands a URL to a download manager or browser). */
         BLOCKED_DOWNLOADS,
         /** Attempts to start another Android app, refused in {@code Activity.startActivity(...)}. */
         BLOCKED_EXTERNAL_INTENTS,
+        /** File-picker launches the user completed (uploads allowed). */
+        ALLOWED_FILE_CHOOSERS,
         /** File-picker launches refused (never opens another app, never reads a local file). */
         BLOCKED_FILE_CHOOSERS,
         /** Camera/microphone requests refused. */
