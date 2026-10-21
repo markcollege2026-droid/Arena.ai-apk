@@ -1,4 +1,52 @@
-# Release notes - Arena WebView (Locked) 1.2.0 (unreleased)
+# Release notes - Arena WebView (Locked) 1.3.0
+
+Fourth build (`versionCode 4`, `versionName 1.3.0`). It loosens backend/sub-resource network, download,
+and upload restrictions so Arena.ai's full web functionality (third-party APIs, CDNs, WebSockets,
+attachment uploads, and file/media exports) works seamlessly, while keeping the strict UI sandbox,
+navigation allow-list, and anti-escape guarantees intact.
+
+## What is new in 1.3.0
+
+* **Strict UI sandbox & page/frame allow-list preserved (`DOCUMENT` and `SUBDOCUMENT`).**
+  Top-level navigations and embedded frames (`Sec-Fetch-Dest: iframe/frame/embed/object/fencedframe`)
+  remain strictly bound to `ArenaAllowlist`: only Arena.ai first-party pages, Google Sign-In
+  (`accounts.google.com`), and the path-pinned Google/Cloudflare/hCaptcha challenge frames may render.
+  Users still cannot browse to arbitrary websites, open external browsers/apps, or trigger deep links.
+* **Automatic return to the main page after Google Sign-In.**
+  When an OAuth redirect in the in-app `AuthWindow` completes and lands back on the root main page
+  (`https://arena.ai/`) without OAuth callback parameters (`code`, `state`, `id_token`, `token`, etc.),
+  `MainActivity.onSignInWindowNavigated` automatically closes the sign-in modal and returns the user to
+  the main page, while intermediate callback hops stay open until `window.opener` / `postMessage` /
+  `window.close()` complete.
+* **Unrestricted HTTPS port-443 backend & sub-resource connectivity.**
+  `TrafficClass.SUBRESOURCE` (`fetch`, XHR, scripts, stylesheets, images, media, fonts, service-worker
+  requests) and `UrlPolicy.evaluateTunnel` (loopback `CONNECT` proxy for HTTPS and `wss://` WebSockets)
+  now permit any valid canonical ASCII DNS host on port `443`. Cleartext `http://`, unsafe schemes
+  (`file:`, `javascript:`, `intent:`), non-443 ports, IP literals (`127.0.0.1`, `10.0.2.2`, `[::1]`),
+  `localhost`, `userinfo@host`, backslashes, and trailing-dot/non-ASCII hosts remain blocked.
+* **In-app file downloads enabled.**
+  `WebViewHardening.BlockingDownloadListener` checks download URLs against `evaluateRequest(url)`:
+  * Valid `https://` downloads are enqueued via Android's `DownloadManager` into
+    `Environment.DIRECTORY_DOWNLOADS` with sanitized filenames and cookies from `CookieManager`, without
+    launching any external viewer or browser intent.
+  * `data:` and allow-listed `blob:` downloads are decoded in-process and written to the app's downloads
+    directory (`getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)`).
+  * Unsafe download URLs (`http://`, `file://`, `javascript:`, untrusted `blob:` origins) are still
+    refused and counted under `BLOCKED_DOWNLOADS`.
+* **Scoped `content://` file uploads enabled.**
+  * `WebViewHardening` enables `setAllowContentAccess(true)` while keeping `setAllowFileAccess(false)`,
+    `setAllowFileAccessFromFileURLs(false)`, and `setAllowUniversalAccessFromFileURLs(false)`.
+  * `ArenaWebChromeClient.onShowFileChooser` delegates to `MainActivity.onFileChooserRequested`, which
+    opens a narrow `Intent.ACTION_OPEN_DOCUMENT` (`CATEGORY_OPENABLE`) picker via
+    `super.startActivityForResult` and validates results with `extractSelectedContentUris` so only
+    `content://` URIs are ever returned to the WebView (`file://` URIs are rejected).
+* **Verified in CI:** JVM unit test suite and 56/56 emulator instrumented tests on Android API 34 passed
+  with 0 failures, and live `arena.ai` smoke testing confirmed 0 blocked sub-resource requests during
+  page load.
+
+---
+
+# Release notes - Arena WebView (Locked) 1.2.0
 
 Third build. It closes the one gap SECURITY.md had always listed first - connections the `WebViewClient`
 hooks never see - adds a way to **reload the page without leaving the app**, and carries the code-review

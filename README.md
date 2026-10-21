@@ -7,21 +7,33 @@ UI, and it does not touch Arena.ai's authentication, CAPTCHA or access rules.
 **Installable APK:** [Releases page](https://github.com/markcollege2026-droid/Arena.ai-apk/releases) -
 or download the `arena-webview-apk` artifact from the [Actions runs](https://github.com/markcollege2026-droid/Arena.ai-apk/actions).
 
-**Package:** `app.arenawebview.locked` · **versionName:** 1.2.0 (unreleased) · **minSdk:** 24 (Android 7.0) ·
+**Package:** `app.arenawebview.locked` · **versionName:** 1.3.0 · **minSdk:** 24 (Android 7.0) ·
 **targetSdk:** 35 · **permissions:** `INTERNET`, `ACCESS_NETWORK_STATE` only.
 
 > Read [SECURITY.md](SECURITY.md) for the threat model and an honest list of what a WebView wrapper
 > *cannot* police. Read [TEST_REPORT.md](TEST_REPORT.md) for what has actually been executed and
 > measured, and [docs/EVIDENCE.md](docs/EVIDENCE.md) for the raw CI output.
 
-**1.1.0 fixes the sign-in failure reported on the first build**: entering an email in either the
-"Continue with Google" form or Arena.ai's own email form did nothing, because Google's sign-in scripts
-were not on the allow-list (its identity UI is served from content-hashed paths that cannot be pinned in
-advance) and because a CAPTCHA widget's *iframe* was being judged as if it wanted to replace the app's
-page. An iframe is now judged as an embedded document - a widget may render in the page, while the app
-itself is still never navigated to a third-party host - and every refusal is written to logcat with its
-reason, host and path. [TEST_REPORT.md §2b](TEST_REPORT.md) has the full account, including why a green
-test suite could not see it.
+**What is new in 1.3.0:**
+* **Strict UI sandbox & navigation lockdown preserved:** The user can only view Arena.ai pages, Google
+  Sign-In (`accounts.google.com`), and pinned CAPTCHA challenge frames (`DOCUMENT` and `SUBDOCUMENT`
+  remain strictly bound to `ArenaAllowlist`). Once Google Sign-In finishes and redirects back to the root
+  `https://arena.ai/` page, the sign-in modal automatically closes and returns the user to the main page.
+* **Unrestricted HTTPS backend & sub-resource connectivity:** `fetch`/XHR, scripts, media, service-worker
+  sub-resources (`TrafficClass.SUBRESOURCE`), and port-443 `CONNECT` tunnels (including `wss://`
+  WebSockets) now allow any valid canonical HTTPS host on port 443 while still blocking cleartext HTTP,
+  non-443 ports, IP literals (`127.0.0.1`, `10.0.2.2`, `[::1]`), `localhost`, `userinfo@host`, and
+  trailing-dot/non-ASCII hosts.
+* **In-app file downloads & scoped file uploads:** Policy-verified `https://`, `blob:`, and `data:`
+  downloads are saved directly (`DownloadManager` to `Downloads` for `https://`, in-app decoding for
+  `data:` and allow-listed `blob:` URLs) without launching any external browser or viewer. File uploads
+  use a scoped `Intent.ACTION_OPEN_DOCUMENT` (`CATEGORY_OPENABLE`) picker that accepts only `content://`
+  URIs (`setAllowContentAccess(true)`, `setAllowFileAccess(false)`, `file://` URIs rejected).
+
+**1.1.0 / 1.2.0 background:** 1.1.0 fixed Google Sign-In and CAPTCHA iframe rendering by introducing the
+`SUBDOCUMENT` traffic class and structured refusal logging; 1.2.0 added the loopback `CONNECT` egress
+guard (`net/EgressProxy` + `web/EgressGuard`) and verified pull-to-refresh / keyboard page reload. See
+[TEST_REPORT.md](TEST_REPORT.md) and [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md) for the full history.
 
 ---
 
@@ -78,25 +90,25 @@ configuration that could be swapped out at runtime.
 
 | # | Guarantee | Mechanism |
 | --- | --- | --- |
-| 1 | Only `https://` loads | Scheme check; `http://`, `file:`, `content:`, `intent:`, `market:`, `javascript:`, `socket:`, `ws(s):` and every other scheme are refused |
-| 2 | Only exact, listed hosts | Exact string match against `ArenaAllowlist` - no suffix or wildcard logic, so `arena.ai.evil.com`, `arena-ai.com`, `arena.ai.` (a trailing dot is a different browser origin) and Unicode/punycode lookalikes never match. `PolicyConfig` refuses to start if a host is listed twice, so no entry can silently shadow another |
-| 3 | Ports pinned to 443 | Any other explicit port is refused |
+| 1 | Only `https://` loads | Scheme check; `http://`, `file:`, `content:`, `intent:`, `market:`, `javascript:`, `socket:`, `ws(s):` and every other scheme are refused as URLs (`data:` and allow-listed `blob:` are permitted only for inert sub-resources and downloads, never as pages or frames) |
+| 2 | Only exact, listed hosts for pages & frames | Top-level navigations (`DOCUMENT`) and iframes/embeds (`SUBDOCUMENT`) require an exact string match against `ArenaAllowlist` - no suffix or wildcard logic, so `arena.ai.evil.com`, `arena-ai.com`, `arena.ai.` (a trailing dot is a different browser origin) and Unicode/punycode lookalikes never match. `PolicyConfig` refuses to start if a host is listed twice, so no entry can silently shadow another |
+| 3 | Ports pinned to 443 | Any other explicit port is refused across documents, sub-documents, sub-resources, and `CONNECT` tunnels |
 | 4 | No credentials in URLs | `userinfo@host` is refused (the classic `https://arena.ai@evil.com` confusion) |
-| 5 | No IP-literal hosts | IPv4/hex/decimal literals and non-ASCII hosts are refused |
+| 5 | No IP-literal or local hosts | IPv4/IPv6/hex/decimal literals, `localhost`, single-label hosts, trailing-dot hosts, and non-ASCII hosts are refused |
 | 6 | Redirects re-validated | `shouldOverrideUrlLoading` and `shouldInterceptRequest` see every hop; the final URL is re-checked in the history and page-finished callbacks |
-| 7 | Sub-requests are checked too | `shouldInterceptRequest` refuses off-policy requests with an in-process empty response (nothing leaves the device) |
-| 7a | **Every connection goes through an in-app egress guard** | At start-up the app starts a tiny `CONNECT`-only proxy on `127.0.0.1` (`net/EgressProxy`) and pins the WebView to it with `androidx.webkit.ProxyController` (`web/EgressGuard`) - one rule for every scheme, no direct fallback. The proxy opens a tunnel only to an allow-listed host on port 443 and answers `403` to anything else, so a WebSocket, a fetch from a worker, a `<link rel=preconnect>` or any other connection the `WebViewClient` hooks never see is still stopped at the host level. Nothing loads before the guard is confirmed in place, and if it cannot be installed the app shows an error instead of loading without it. The proxy never terminates TLS: it forwards bytes, so the system-CA-only trust policy and certificate checks are untouched |
-| 8 | An embedded document is not a navigation | An iframe/frame/embed is judged as an *embedded* document: a CAPTCHA or identity widget frame may render from an asset-only host, while the same URL is refused as the app's own page. A sub-document cannot replace the page, navigate the app or leave it |
-| 9 | Every refusal is named in the log | One logcat line per distinct refused destination - reason, host and path, never the query string (`refused sub-resource: PATH_NOT_ALLOWED host=www.gstatic.com path=/...`). A page that half-works is diagnosable instead of mysterious |
+| 7 | Sub-requests & sub-documents are checked | `shouldInterceptRequest` classifies `Sec-Fetch-Dest: iframe/frame/embed/object/fencedframe` as `SUBDOCUMENT` (enforcing `ArenaAllowlist`) and allows `SUBRESOURCE` requests to valid canonical HTTPS hosts on port 443 for backend/API connectivity, answering any off-policy request with an in-process `403` response |
+| 7a | **Every connection goes through an in-app egress guard** | At start-up the app starts a tiny `CONNECT`-only proxy on `127.0.0.1` (`net/EgressProxy`) and pins the WebView to it with `androidx.webkit.ProxyController` (`web/EgressGuard`) - one rule for every scheme, no direct fallback. The proxy opens a tunnel only to a valid canonical DNS host on port 443 and answers `403` to non-443 ports, IP literals (`127.0.0.1`, `10.0.2.2`, `[::1]`), `localhost`, userinfo, or non-ASCII/trailing-dot hosts, and `400` to cleartext HTTP proxy requests. Nothing loads before the guard is confirmed in place, and if it cannot be installed the app shows an error instead of loading without it. The proxy never terminates TLS: it forwards bytes, so the system-CA-only trust policy and certificate checks are untouched |
+| 8 | An embedded document is not a navigation | An iframe/frame/embed is judged as an *embedded* document (`SUBDOCUMENT`): a CAPTCHA or identity widget frame may render from an allow-listed asset host, while the same URL is refused as the app's own page (`DOCUMENT`) and arbitrary third-party iframes are refused |
+| 9 | Every refusal is named in the log | One logcat line per distinct refused destination - reason, host and path, never the query string. A page that half-works is diagnosable instead of mysterious |
 | 10 | Service worker traffic is checked | `ServiceWorkerController` client applies the same policy |
 | 11 | Pop-ups are captured, never shown | `window.open`/`target="_blank"` is intercepted; an allowed URL is routed into the single visible WebView, anything else is refused |
-| 12 | The only second window is the sign-in window | Google sign-in is an OAuth *pop-up* flow: the page that opened it receives the result through `window.opener`, so that one window has to stay alive. It is a plain child view of the same activity (never a second activity, never a system browser, never a Custom Tab), it can always be closed by the user, and the guard destroys it when the flow ends (`window.close()`), when the user closes it, when back is pressed, when the activity is destroyed, or when the watchdog sees it off-policy |
-| 13 | The sign-in window is fenced to the hand-off | Inside it, only Google's sign-in pages (`accounts.google.com`) and the return hop to an Arena.ai page are displayable. Every other URL - a third party, a look-alike, or an asset-only host such as `ssl.gstatic.com` - is refused and the window is torn down, even though the main WebView would have allowed that host as an asset |
+| 12 | The only second window is the sign-in window | Google sign-in is an OAuth *pop-up* flow: the page that opened it receives the result through `window.opener`, so that one window has to stay alive. It is a plain child view of the same activity (never a second activity, never a system browser, never a Custom Tab), it can always be closed by the user, and the guard destroys it when the flow ends (`window.close()`), when a post-auth redirect lands back on the root `https://arena.ai/` page, when the user closes it, when back is pressed, when the activity is destroyed, or when the watchdog sees it off-policy |
+| 13 | The sign-in window is fenced to the hand-off | Inside it, only Google's sign-in pages (`accounts.google.com`) and the return hop to an Arena.ai page are displayable. Every other URL - a third party, a look-alike, or an asset-only host such as `ssl.gstatic.com` - is refused and the window is torn down |
 | 14 | CAPTCHAs are shown, never solved | The reCAPTCHA/Turnstile widget hosts are path-scoped *asset* entries, so a challenge renders inside the arena.ai page and the user answers it. The wrapper never reads, pre-answers, automates or bypasses a challenge, and there is no JavaScript bridge through which it could |
-| 15 | Sign-in never leaves the app | No `ACTION_VIEW`, no `androidx.browser`/Custom Tab, no chooser, no `startActivity` - `signInNeverLeavesTheApp` fails the build if any of those appears in the sources |
-| 16 | External apps are unreachable | `startActivity`/`startActivityForResult`/`startActivities` are overridden to refuse, incoming intents are only logged, and off-policy custom schemes never reach the platform |
-| 17 | Downloads never start | A `DownloadListener` refuses and reports; the platform `DownloadManager` is never used |
-| 18 | File uploads / media capture / geolocation are denied | `WebChromeClient` refusals |
+| 15 | Sign-in never leaves the app | No `ACTION_VIEW`, no `androidx.browser`/Custom Tab, no chooser, no external `startActivity` - `signInNeverLeavesTheApp` fails the build if any of those appears in the sources |
+| 16 | External apps & browsers are unreachable | Public `startActivity`/`startActivityForResult`/`startActivities` overrides refuse all external intents (`ACTION_VIEW`, `ACTION_SEND`, `tel:`, `mailto:`, `market://`, browser launches), incoming intents are only logged, and off-policy custom schemes never reach the platform |
+| 17 | Policy-verified in-app downloads | `BlockingDownloadListener` validates download URLs via `evaluateRequest`: allowed `https://` downloads are enqueued with Android's `DownloadManager` into `Downloads`, and `data:` / allow-listed `blob:` downloads are saved in-app without opening any browser or external viewer. Unsafe schemes (`http://`, `file://`, `javascript:`) and untrusted `blob:` origins are refused (`BLOCKED_DOWNLOADS`) |
+| 18 | Scoped `content://` file uploads; media capture & geolocation denied | `onShowFileChooser` opens a narrow `Intent.ACTION_OPEN_DOCUMENT` (`CATEGORY_OPENABLE`) picker via `super.startActivityForResult`, enables `setAllowContentAccess(true)` while keeping `setAllowFileAccess(false)`, and filters results through `extractSelectedContentUris` so only `content://` URIs are accepted (`file://` URIs are rejected). Camera/microphone capture and geolocation permissions remain unconditionally denied |
 | 19 | TLS failures are fatal | `onReceivedSslError` always cancels, client-certificate requests and HTTP auth are cancelled |
 | 20 | Android Safe Browsing is on | `setSafeBrowsingEnabled(true)`; a hit is treated as a blocked navigation |
 | 21 | Back stays inside the app | Back closes the sign-in window first, then handles the app's own fullscreen video and overlay, then walks WebView history **only to entries that still pass policy**; leaving the app requires a double press |
@@ -139,8 +151,11 @@ flows tolerate:
   widget rendering in).
 
 Gmail, Drive, Docs, Play, `googleapis.com`, other `googleusercontent.com` hosts, Google Search outside
-`/recaptcha/`, and every other third party remain unreachable - they are not in `ArenaAllowlist`, and a
-host that is not in that file does not exist as far as this app is concerned.
+`/recaptcha/`, and every other third party remain unreachable **as pages or embedded frames (`DOCUMENT` /
+`SUBDOCUMENT`)** - they are not in `ArenaAllowlist`, so the user can never browse to them or have them
+take over the screen. Outbound HTTPS sub-resource requests (`SUBRESOURCE`) and port-443 `CONNECT` tunnels
+are permitted to valid canonical DNS hosts so Arena.ai's backend APIs, CDNs, WebSockets, uploads, and
+downloads work without restriction.
 
 The wrapper **never solves, pre-answers, automates or bypasses a CAPTCHA**, and it never reads, stores
 or transmits a credential: it has no JavaScript bridge, and it renders whatever challenge the site
@@ -166,9 +181,10 @@ one of these goes through the same verification as any other navigation (guarant
 ## 3. Known limitations (honest list)
 
 1. **The guard decides by host and port, not by content.** WebSockets, worker fetches and every other
-   connection are forced through the in-app egress proxy, which refuses any host that is not on the list
-   - but it forwards TLS bytes without reading them, so *what* an allow-listed host sends or receives is
-   not inspected (and could not be, without breaking TLS). WebRTC is disabled at the permission level.
+   connection are forced through the in-app egress proxy, which enforces canonical DNS host validation on
+   port 443 and refuses non-443 ports, cleartext HTTP, IP literals, `localhost`, and malformed hosts -
+   but it forwards TLS bytes without reading them, so *what* a host sends or receives is not inspected
+   (and could not be, without breaking TLS). WebRTC is disabled at the permission level.
    See SECURITY.md §4.
 2. **A hostile page in the allow-list would be trusted.** The guarantee is "only these hosts", not
    "only well-behaved content".
@@ -201,9 +217,9 @@ one of these goes through the same verification as any other navigation (guarant
 9. **The policy is Android-free unit-tested, but the WebView wiring is tested on an emulator.** Where
    a claim depends on device behaviour it is marked as such in TEST_REPORT.md.
 10. **The egress guard is a loopback listener.** It binds `127.0.0.1` on a random port for the life of
-    the process, so another app on the same device could connect to it - and obtain exactly what this
-    app can obtain: a TCP tunnel to an allow-listed host on port 443, nothing else (no cookies, no
-    session, no other destination). It also means HTTP/3 (QUIC) is not used by the WebView - everything
+    the process, so another app on the same device could connect to it - and obtain a TCP tunnel to a
+    canonical DNS host on port 443, nothing else (no cookies, no session, no loopback/RFC1918 IP literal
+    access, no non-443 ports). It also means HTTP/3 (QUIC) is not used by the WebView - everything
     is HTTP/1.1 or HTTP/2 inside an ordinary TLS tunnel - and that a device-wide HTTP proxy, if one is
     configured, is chained through rather than bypassed.
 
