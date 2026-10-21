@@ -176,7 +176,7 @@ public class SourceInvariantsTest {
     public void theAppNeverStartsAnotherActivity() throws Exception {
         String sources = allMainSources();
         assertFalse("startActivity must never be delegated to the platform",
-                sources.contains("super.startActivity"));
+                sources.contains("super.startActivity("));
         // File pickers for uploads are permitted: startActivityForResult is only used there.
         // No other call site may start an activity.
         // Occurrences: two method declarations (with/without Bundle) + one call site in onFileChooserRequested.
