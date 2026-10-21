@@ -977,7 +977,7 @@ public class MainActivity extends Activity implements GuardHost {
                 int idx = contentDisposition.indexOf("filename=");
                 if (idx >= 0) {
                     fileName = contentDisposition.substring(idx + 9).trim();
-                    if (fileName.startsWith(""") && fileName.endsWith(""")) {
+                    if (fileName.startsWith("\"") && fileName.endsWith("\"")) {
                         fileName = fileName.substring(1, fileName.length() - 1);
                     }
                 }
