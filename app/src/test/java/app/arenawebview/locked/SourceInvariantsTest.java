@@ -186,9 +186,9 @@ public class SourceInvariantsTest {
                 startActivityForResultCount == 3);
         assertTrue("startActivityForResult is in onFileChooserRequested",
                 sources.contains("onFileChooserRequested")
-                        && sources.contains("startActivityForResult(intent, requestCode)"));
+                        && sources.contains("super.startActivityForResult(intent, requestCode)"));
         assertFalse("no other startActivity calls",
-                sources.contains("startActivity(") && !sources.contains("startActivityForResult(intent, requestCode)"));
+                sources.contains("startActivity(") && !sources.contains("super.startActivityForResult(intent, requestCode)"));
 
         String main = code("app/arenawebview/locked/MainActivity.java");
         assertTrue(main.contains("public void startActivity(Intent intent)"));
