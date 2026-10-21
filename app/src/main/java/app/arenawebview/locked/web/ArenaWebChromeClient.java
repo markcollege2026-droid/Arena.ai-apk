@@ -74,6 +74,17 @@ public class ArenaWebChromeClient extends WebChromeClient {
     // hierarchy, and only by the activity (PopupRouterClient asks the host to show it).
     // ---------------------------------------------------------------------------------------------
 
+    private void pruneDeadPopups() {
+        synchronized (livePopups) {
+            for (int i = livePopups.size() - 1; i >= 0; i--) {
+                WebView popup = livePopups.get(i);
+                if (popup == null) {
+                    livePopups.remove(i);
+                }
+            }
+        }
+    }
+
     @Override
     public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
         PolicyMetrics metrics = host.metrics();
