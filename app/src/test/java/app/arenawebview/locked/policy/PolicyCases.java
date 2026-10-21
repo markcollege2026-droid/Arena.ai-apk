@@ -179,30 +179,38 @@ public final class PolicyCases {
         both(cases, "double port", "https://arena.ai:443:443/", false, BlockReason.INVALID_HOST);
 
         // ---------------------------------------------------------------------------------------
-        // 4. Hosts that are not exactly on the list (the whole point of the exercise)
+        // 4. Hosts that are not on the navigation allow-list (refused as DOCUMENT & SUBDOCUMENT,
+        //    allowed as SUBRESOURCE for backend/API connectivity)
         // ---------------------------------------------------------------------------------------
-        both(cases, "plain third party", "https://evil.example/", false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "third party with default port", "https://evil.example:443/", false,
+        navBlockedSubAllowed(cases, "plain third party", "https://evil.example/",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "third party with default port", "https://evil.example:443/",
                 BlockReason.HOST_NOT_ALLOWED);
         both(cases, "third party in the path of an allowed host", "https://arena.ai/evil.example", true, null);
-        both(cases, "hyphen look-alike", "https://arena-ai.com/", false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "no-dot look-alike", "https://arenaai.com/", false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "plural look-alike", "https://arenas.ai/", false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "sub-domain look-alike", "https://arena.ai.evil.example/", false,
+        navBlockedSubAllowed(cases, "hyphen look-alike", "https://arena-ai.com/",
                 BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "allowed host as a sub-domain of a third party", "https://arena.ai.evil.example/x", false,
+        navBlockedSubAllowed(cases, "no-dot look-alike", "https://arenaai.com/",
                 BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "unlisted sub-domain", "https://sub.arena.ai/", false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "mail infrastructure sub-domain", "https://mail.arena.ai/", false,
+        navBlockedSubAllowed(cases, "plural look-alike", "https://arenas.ai/",
                 BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "cPanel sub-domain", "https://cpanel.arena.ai/", false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "SSO sub-domain (needs an explicit decision)", "https://okta.arena.ai/", false,
+        navBlockedSubAllowed(cases, "sub-domain look-alike", "https://arena.ai.evil.example/",
                 BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "non-production preview host", "https://api.preview.arena.ai/", false,
+        navBlockedSubAllowed(cases, "allowed host as a sub-domain of a third party",
+                "https://arena.ai.evil.example/x", BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "unlisted sub-domain", "https://sub.arena.ai/",
                 BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "non-production portal host", "https://portal.api.preview.arena.ai/", false,
+        navBlockedSubAllowed(cases, "mail infrastructure sub-domain", "https://mail.arena.ai/",
                 BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "e-mail security host", "https://mta-sts.arena.ai/", false, BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "cPanel sub-domain", "https://cpanel.arena.ai/",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "SSO sub-domain (needs an explicit decision)", "https://okta.arena.ai/",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "non-production preview host", "https://api.preview.arena.ai/",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "non-production portal host", "https://portal.api.preview.arena.ai/",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "e-mail security host", "https://mta-sts.arena.ai/",
+                BlockReason.HOST_NOT_ALLOWED);
         // A trailing dot names the same DNS zone but a *different browser origin* (no shared cookies or
         // storage, CORS mismatch against the real site). It is never produced by the site and is refused
         // instead of being folded into the canonical host, so this validator and Chromium agree on what
@@ -214,8 +222,9 @@ public final class PolicyCases {
         both(cases, "trailing dot on a sign-in host", "https://accounts.google.com./signin", false,
                 BlockReason.INVALID_HOST);
         both(cases, "two trailing dots", "https://arena.ai../", false, BlockReason.INVALID_HOST);
-        both(cases, "punycode look-alike", "https://xn--rena-4qa.ai/", false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "punycode of the real host", "https://xn--arena-2d0b.ai/", false,
+        navBlockedSubAllowed(cases, "punycode look-alike", "https://xn--rena-4qa.ai/",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "punycode of the real host", "https://xn--arena-2d0b.ai/",
                 BlockReason.HOST_NOT_ALLOWED);
         both(cases, "Cyrillic look-alike 'a'", "https://\u0430rena.ai/", false, BlockReason.NON_ASCII_HOST);
         both(cases, "ideographic full stop", "https://arena\u3002ai/", false, BlockReason.NON_ASCII_HOST);
@@ -242,7 +251,7 @@ public final class PolicyCases {
                 BlockReason.BACKSLASH_AMBIGUITY);
         both(cases, "backslash after the scheme", "https:\\\\evil.example/", false,
                 BlockReason.BACKSLASH_AMBIGUITY);
-        both(cases, "tab-separated look-alike host", "https://arena.ai\tevil.example/", false,
+        navBlockedSubAllowed(cases, "tab-separated look-alike host", "https://arena.ai\tevil.example/",
                 BlockReason.HOST_NOT_ALLOWED);
         both(cases, "NUL in the path", "https://arena.ai/\u0000evil", false, BlockReason.CONTROL_CHARACTER);
         both(cases, "carriage return is removed, exactly like Chromium does", "https://arena.ai\r/chat",
@@ -301,28 +310,28 @@ public final class PolicyCases {
         sub(cases, "account avatar", "https://lh3.googleusercontent.com/a/ACg8ocABC=s96-c", true, null);
         sub(cases, "Google font file", "https://fonts.gstatic.com/s/roboto/v30/x.woff2", true, null);
 
-        // --- what stays out ----------------------------------------------------------------------
+        // --- what stays out of user-facing navigation and embedded frames -------------------------
         doc(cases, "look-alike of Google's account host",
                 "https://accounts.google.com.evil.example/signin", false, BlockReason.HOST_NOT_ALLOWED);
         doc(cases, "Google account host on a look-alike TLD", "https://accounts.google.co/signin",
                 false, BlockReason.HOST_NOT_ALLOWED);
         doc(cases, "userinfo trick against Google's host",
                 "https://accounts.google.com@evil.example/signin", false, BlockReason.USERINFO_PRESENT);
-        sub(cases, "Google search stays unreachable", "https://www.google.com/search?q=hello",
+        frame(cases, "Google search stays unreachable as a frame", "https://www.google.com/search?q=hello",
                 false, BlockReason.PATH_NOT_ALLOWED);
-        both(cases, "Gmail stays unreachable", "https://mail.google.com/mail/u/0/",
-                false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "Google Drive stays unreachable", "https://drive.google.com/drive/my-drive",
-                false, BlockReason.HOST_NOT_ALLOWED);
-        both(cases, "Google Play stays unreachable", "https://play.google.com/store/apps",
-                false, BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "Gmail stays unreachable", "https://mail.google.com/mail/u/0/",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "Google Drive stays unreachable", "https://drive.google.com/drive/my-drive",
+                BlockReason.HOST_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "Google Play stays unreachable", "https://play.google.com/store/apps",
+                BlockReason.HOST_NOT_ALLOWED);
         both(cases, "the account host is reachable at every path the flow uses",
                 "https://accounts.google.com/v3/accounts/whatever", true, null);
         both(cases, "a Google account page is still HTTPS only", "http://accounts.google.com/signin",
                 false, BlockReason.SCHEME_NOT_HTTPS);
-        sub(cases, "asset host outside its pinned paths",
+        frame(cases, "asset host outside its pinned paths as a frame",
                 "https://apis.google.com/console/whatever", false, BlockReason.PATH_NOT_ALLOWED);
-        sub(cases, "avatar host outside its pinned path",
+        frame(cases, "avatar host outside its pinned path as a frame",
                 "https://lh3.googleusercontent.com/not-an-avatar", false, BlockReason.PATH_NOT_ALLOWED);
 
         // --- asset hosts can never become the page ------------------------------------------------
@@ -347,17 +356,15 @@ public final class PolicyCases {
                 "https://www.recaptcha.net/recaptcha/api.js", true, null);
         sub(cases, "Turnstile widget", "https://challenges.cloudflare.com/turnstile/v0/api.js",
                 true, null);
-        // Path escapes are checked on a host that is still path-pinned. (Google's static asset hosts are
-        // deliberately path-unrestricted now, because their paths are content-hashed and change without
-        // notice - see ArenaAllowlist.signInEntries.)
-        sub(cases, "path traversal out of a pinned path",
+        // Path escapes are checked on a host that is still path-pinned for embedded frames.
+        frame(cases, "path traversal out of a pinned path",
                 "https://lh3.googleusercontent.com/a/../../translate/x", false,
                 BlockReason.PATH_NOT_ALLOWED);
-        sub(cases, "percent-encoded path escape", "https://lh3.googleusercontent.com/a%2f..%2fx", false,
+        frame(cases, "percent-encoded path escape", "https://lh3.googleusercontent.com/a%2f..%2fx", false,
                 BlockReason.PATH_NOT_ALLOWED);
         frame(cases, "the Cloudflare challenge frame its own docs describe",
                 "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/x", true, null);
-        sub(cases, "Cloudflare host outside the widget paths",
+        frame(cases, "Cloudflare host outside the widget paths",
                 "https://challenges.cloudflare.com/other/x", false, BlockReason.PATH_NOT_ALLOWED);
         doc(cases, "Turnstile host may never become the page",
                 "https://challenges.cloudflare.com/turnstile/v0/api.js", false,
@@ -400,5 +407,11 @@ public final class PolicyCases {
 
     private static void frame(List<Case> out, String name, String url, boolean allowed, BlockReason reason) {
         out.add(new Case(name, url, SUBDOCUMENT, allowed, reason));
+    }
+
+    private static void navBlockedSubAllowed(List<Case> out, String name, String url, BlockReason reason) {
+        out.add(new Case(name + " (document)", url, DOCUMENT, false, reason));
+        out.add(new Case(name + " (subdocument)", url, SUBDOCUMENT, false, reason));
+        out.add(new Case(name + " (subresource)", url, SUBRESOURCE, true, null));
     }
 }

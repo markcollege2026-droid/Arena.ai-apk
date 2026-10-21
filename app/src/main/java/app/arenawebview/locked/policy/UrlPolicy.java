@@ -215,8 +215,14 @@ public final class UrlPolicy {
             return PolicyResult.block(reason, "", rawUrl, truncate(hostPart));
         }
 
-        // --- 4. Allow-list. -----------------------------------------------------------------------
+        // --- 4. Allow-list & traffic class rules. -------------------------------------------------
         AllowEntry entry = config.findByHost(canonicalHost);
+        if (trafficClass == TrafficClass.SUBRESOURCE) {
+            // Backend APIs, sub-resources, uploads and downloads may communicate with any valid
+            // canonical HTTPS host on port 443, while DOCUMENT and SUBDOCUMENT remain strictly
+            // restricted to the allow-list below so the user can never browse arbitrary sites.
+            return PolicyResult.allow(canonicalHost, rawUrl, entry);
+        }
         if (entry == null) {
             return PolicyResult.block(BlockReason.HOST_NOT_ALLOWED, canonicalHost, rawUrl, "");
         }
@@ -242,11 +248,11 @@ public final class UrlPolicy {
      * The question the egress proxy asks for every {@code CONNECT host:port} it is handed: may this app
      * open <em>any</em> TLS connection to that host?
      *
-     * <p>This is a host-level question, deliberately weaker than the three URL questions: at the TCP
-     * layer there is no path, no role and no traffic class - only a name and a port - and the URL hooks
-     * keep enforcing paths and roles on top. It is also the only question that WebSockets and every other
-     * transport the WebView hooks cannot see are asked, so it has the same host rules as a URL: exact
-     * allow-listed names only, port 443 only, no IP literals, no look-alikes.</p>
+     * <p>To allow unrestricted backend connectivity, file uploads, downloads and WebSockets while
+     * preserving the strict UI navigation sandbox, any valid canonical ASCII DNS host on port 443 is
+     * permitted at the tunnel layer. Top-level pages ({@link TrafficClass#DOCUMENT}) and embedded frames
+     * ({@link TrafficClass#SUBDOCUMENT}) remain strictly locked to {@link ArenaAllowlist} by the WebView
+     * navigation and interception hooks.</p>
      *
      * @param host the host as it appears in the CONNECT request (any case; must not contain a port)
      * @param port the requested port
@@ -274,9 +280,6 @@ public final class UrlPolicy {
             return PolicyResult.block(BlockReason.PORT_NOT_ALLOWED, canonicalHost, raw, String.valueOf(port));
         }
         AllowEntry entry = config.findByHost(canonicalHost);
-        if (entry == null) {
-            return PolicyResult.block(BlockReason.HOST_NOT_ALLOWED, canonicalHost, raw, "");
-        }
         return PolicyResult.allow(canonicalHost, raw, entry);
     }
 

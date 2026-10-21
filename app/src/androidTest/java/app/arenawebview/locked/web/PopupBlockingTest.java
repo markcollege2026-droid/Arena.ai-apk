@@ -55,7 +55,8 @@ public class PopupBlockingTest {
                         client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.navigation("https://evil.example/")));
 
                 // ... and requests made from inside it are policed as well.
-                assertNotNull(client.shouldInterceptRequest(popup, FakeWebResourceRequest.subresource("https://evil.example/tracker.js")));
+                assertNotNull(client.shouldInterceptRequest(popup, FakeWebResourceRequest.navigation("https://evil.example/")));
+                assertNotNull(client.shouldInterceptRequest(popup, FakeWebResourceRequest.subresource("http://evil.example/tracker.js")));
                 assertNull(client.shouldInterceptRequest(popup, FakeWebResourceRequest.subresource("https://arena.ai/x.js")));
             }
         });

@@ -72,9 +72,13 @@ public class NavigationGuardTest {
     }
 
     @Test
-    public void refusesThirdPartySubresourcesWithoutSendingThem() {
+    public void allowsBackendSubresourcesWhileRefusingUnsafeSubresources() {
+        // Valid HTTPS backend/API sub-resources are allowed (null == carry on normally).
+        assertNull(client.shouldInterceptRequest(webView,
+                FakeWebResourceRequest.subresource("https://api.example.com/v1/models")));
+        // Unsafe sub-resources (cleartext HTTP, non-443 port, file://) are still refused in-process.
         WebResourceResponse response = client.shouldInterceptRequest(webView,
-                FakeWebResourceRequest.subresource("https://evil.example/tracker.js"));
+                FakeWebResourceRequest.subresource("http://evil.example/tracker.js"));
         assertNotNull("a refused request must be answered in-process, not with null", response);
         assertEquals(403, response.getStatusCode());
         assertEquals(1, host.metrics().count(PolicyMetrics.Counter.BLOCKED_REQUESTS));
@@ -140,7 +144,7 @@ public class NavigationGuardTest {
     @Test
     public void everyRefusalIsNamedInTheLogWithHostAndPathOnly() {
         client.shouldInterceptRequest(webView, FakeWebResourceRequest.subresource(
-                "https://evil.example/steal?token=supersecret"));
+                "https://evil.example:8443/steal?token=supersecret"));
         assertEquals(1, host.metrics().count(PolicyMetrics.Counter.BLOCKED_REQUESTS));
         String report = host.metrics().snapshot();
         assertTrue("the diagnostics must name the refused host: " + report, report.contains("evil.example"));

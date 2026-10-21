@@ -29,9 +29,13 @@ public final class RecordingGuardHost extends BaseGuardHost {
     public String lastSignInWindowUrl;
     public String lastSignInWindowClosedReason;
     public String lastSignInWindowNavigated;
+    public String lastDownloadRequested;
     public String lastDownloadBlocked;
     public String lastError;
     public String lastRecoveryReason;
+    public boolean allowFileChooser;
+    public int downloadsRequested;
+    public int fileChooserRequests;
     public int fileChooserBlocks;
     public int sslBlocks;
     public int fullscreenRequests;
@@ -100,9 +104,25 @@ public final class RecordingGuardHost extends BaseGuardHost {
     }
 
     @Override
+    public void onDownloadRequested(String url, String userAgent, String contentDisposition,
+                                    String mimeType, long contentLength) {
+        lastDownloadRequested = url;
+        downloadsRequested++;
+        event("download requested " + url);
+    }
+
+    @Override
     public void onDownloadBlocked(String url, String mimeType) {
         lastDownloadBlocked = url;
         event("download blocked " + url);
+    }
+
+    @Override
+    public boolean onFileChooserRequested(android.webkit.ValueCallback<android.net.Uri[]> filePathCallback,
+                                          android.webkit.WebChromeClient.FileChooserParams fileChooserParams) {
+        fileChooserRequests++;
+        event("file chooser requested");
+        return allowFileChooser;
     }
 
     @Override

@@ -2,6 +2,7 @@ package app.arenawebview.locked;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
@@ -10,10 +11,12 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.text.InputType;
+import android.util.Base64;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
@@ -24,6 +27,8 @@ import android.view.WindowInsets;
 import android.webkit.CookieManager;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
 import android.webkit.WebBackForwardList;
 import android.webkit.WebChromeClient;
 import android.webkit.WebHistoryItem;
@@ -33,6 +38,11 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 import app.arenawebview.locked.policy.ArenaAllowlist;
@@ -87,6 +97,7 @@ public class MainActivity extends Activity implements GuardHost {
     private static final long REFRESH_SPINNER_TIMEOUT_MS = 20_000L;
     private static final long EXIT_BACK_WINDOW_MS = 2500L;
     private static final long MESSAGE_THROTTLE_MS = 900L;
+    private static final int REQUEST_CODE_FILE_CHOOSER = 1001;
 
     private final PolicyConfig policy = ArenaAllowlist.productionConfig();
     private final PolicyMetrics metrics = PolicyMetrics.get();
@@ -100,6 +111,7 @@ public class MainActivity extends Activity implements GuardHost {
     private ArenaWebChromeClient chromeClient;
     private StatusOverlay overlay;
     private Runnable refreshSpinnerTimeout;
+    private ValueCallback<Uri[]> pendingFilePathCallback;
 
     /**
      * The in-app window a sign-in hand-off is shown in (Google's account pages). Null-hosted most of the
@@ -441,6 +453,7 @@ public class MainActivity extends Activity implements GuardHost {
     protected void onDestroy() {
         stopWatchdog();
         hideRefreshSpinner();
+        cancelPendingFileChooser();
         closeSignInWindow("destroy");
         if (chromeClient != null) {
             chromeClient.destroyPopups();
@@ -863,10 +876,53 @@ public class MainActivity extends Activity implements GuardHost {
     @Override
     public void onSignInWindowNavigated(String url) {
         Log.i(TAG, "sign-in window navigated: " + describeDestination(url, null));
+        if (isCompletedMainPageReturn(url)) {
+            // The OAuth flow redirected back to the main page inside the sign-in window instead of
+            // calling window.close(). Close the sign-in window so the user is returned to the main page.
+            closeSignInWindow("auth-complete");
+            return;
+        }
         if (signInWindowWebView != null && authWindow != null && authWindow.isWindowVisible()) {
             // Keep the window's caption honest about which page is inside it.
             authWindow.show(signInWindowWebView, getString(R.string.auth_window_title)
                     + " - " + destinationHost(url, null));
+        }
+    }
+
+    /**
+     * True when the sign-in window has finished its OAuth callback and landed back on the root main page
+     * ({@code https://arena.ai/} or {@code https://www.arena.ai/}) with no callback query parameters.
+     */
+    static boolean isCompletedMainPageReturn(String url) {
+        if (url == null || url.isEmpty()) {
+            return false;
+        }
+        try {
+            Uri uri = Uri.parse(url);
+            String host = uri.getHost();
+            if (host == null) {
+                return false;
+            }
+            String lowerHost = host.toLowerCase(Locale.ROOT);
+            if (!"arena.ai".equals(lowerHost) && !"www.arena.ai".equals(lowerHost)) {
+                return false;
+            }
+            String path = uri.getPath();
+            if (path != null && !path.isEmpty() && !"/".equals(path)) {
+                return false;
+            }
+            String query = uri.getEncodedQuery();
+            if (query != null && !query.isEmpty()) {
+                String lowerQuery = query.toLowerCase(Locale.ROOT);
+                if (lowerQuery.contains("code=") || lowerQuery.contains("state=")
+                        || lowerQuery.contains("token=") || lowerQuery.contains("oauth")
+                        || lowerQuery.contains("callback") || lowerQuery.contains("clerk")) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -902,13 +958,255 @@ public class MainActivity extends Activity implements GuardHost {
     }
 
     @Override
+    public void onDownloadRequested(String url, String userAgent, String contentDisposition,
+                                    String mimeType, long contentLength) {
+        if (url == null || url.isEmpty()) {
+            return;
+        }
+        String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
+        if (fileName == null || fileName.trim().isEmpty()) {
+            fileName = "download";
+        }
+        String lower = url.trim().toLowerCase(Locale.ROOT);
+        if (lower.startsWith("https://")) {
+            enqueueHttpsDownload(url, userAgent, mimeType, fileName);
+        } else if (lower.startsWith("data:")) {
+            saveDataUrlDownload(url, fileName);
+        } else if (lower.startsWith("blob:")) {
+            fetchBlobDownload(url, fileName);
+        }
+    }
+
+    private void enqueueHttpsDownload(String url, String userAgent, String mimeType, String fileName) {
+        try {
+            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+            if (dm == null) {
+                onMessage("Download service unavailable");
+                return;
+            }
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+            if (mimeType != null && !mimeType.isEmpty()) {
+                request.setMimeType(mimeType);
+            }
+            if (userAgent != null && !userAgent.isEmpty()) {
+                request.addRequestHeader("User-Agent", userAgent);
+            }
+            try {
+                String cookie = CookieManager.getInstance().getCookie(url);
+                if (cookie != null && !cookie.isEmpty()) {
+                    request.addRequestHeader("Cookie", cookie);
+                }
+            } catch (Throwable ignored) {
+                // Cookie header is best-effort.
+            }
+            request.setTitle(fileName);
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+            try {
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                dm.enqueue(request);
+            } catch (Throwable fallback) {
+                request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, fileName);
+                dm.enqueue(request);
+            }
+            Log.i(TAG, "started download: " + fileName);
+            onMessage("Downloading " + fileName);
+        } catch (Throwable t) {
+            Log.w(TAG, "download failed", t);
+            onMessage("Could not start download");
+        }
+    }
+
+    private void saveDataUrlDownload(String dataUrl, String fileName) {
+        try {
+            int comma = dataUrl.indexOf(',');
+            if (comma < 0) {
+                onMessage("Could not save download");
+                return;
+            }
+            String meta = dataUrl.substring(5, comma).toLowerCase(Locale.ROOT);
+            String payload = dataUrl.substring(comma + 1);
+            byte[] bytes = meta.contains(";base64")
+                    ? Base64.decode(payload, Base64.DEFAULT)
+                    : Uri.decode(payload).getBytes(StandardCharsets.UTF_8);
+            File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (dir == null) {
+                dir = getFilesDir();
+            }
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            File out = new File(dir, fileName);
+            try (FileOutputStream fos = new FileOutputStream(out)) {
+                fos.write(bytes);
+                fos.flush();
+            }
+            Log.i(TAG, "saved data download: " + out.getName());
+            onMessage("Downloaded " + fileName);
+        } catch (Throwable t) {
+            Log.w(TAG, "data download failed", t);
+            onMessage("Could not save download");
+        }
+    }
+
+    private void fetchBlobDownload(String blobUrl, String fileName) {
+        WebView view = webView;
+        if (view == null) {
+            return;
+        }
+        String safeUrl = escapeJsSingleQuoted(blobUrl);
+        String safeName = escapeJsSingleQuoted(fileName);
+        String script = "(function(){fetch('" + safeUrl + "').then(function(r){return r.blob();})"
+                + ".then(function(b){var fr=new FileReader();fr.onloadend=function(){"
+                + "if(typeof fr.result==='string'){var a=document.createElement('a');"
+                + "a.href=fr.result;a.download='" + safeName + "';"
+                + "document.body.appendChild(a);a.click();document.body.removeChild(a);}};"
+                + "fr.readAsDataURL(b);}).catch(function(){});return 'ok';})()";
+        try {
+            view.evaluateJavascript(script, null);
+            onMessage("Downloading " + fileName);
+        } catch (Throwable t) {
+            Log.w(TAG, "blob download failed", t);
+        }
+    }
+
+    private static String escapeJsSingleQuoted(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\r", "")
+                .replace("\n", "");
+    }
+
+    @Override
     public void onDownloadBlocked(String url, String mimeType) {
-        onMessage("Downloads are disabled in this app");
+        onMessage("Blocked unsafe download");
+    }
+
+    @Override
+    public boolean onFileChooserRequested(ValueCallback<Uri[]> filePathCallback,
+                                          WebChromeClient.FileChooserParams fileChooserParams) {
+        if (filePathCallback == null || isFinishing() || isDestroyed()) {
+            return false;
+        }
+        cancelPendingFileChooser();
+        Intent intent = buildFileChooserIntent(fileChooserParams);
+        pendingFilePathCallback = filePathCallback;
+        try {
+            super.startActivityForResult(intent, REQUEST_CODE_FILE_CHOOSER, null);
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "could not launch system file picker", t);
+            pendingFilePathCallback = null;
+            return false;
+        }
+    }
+
+    static Intent buildFileChooserIntent(WebChromeClient.FileChooserParams fileChooserParams) {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if (fileChooserParams != null) {
+            try {
+                if (fileChooserParams.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                }
+                String[] acceptTypes = fileChooserParams.getAcceptTypes();
+                if (acceptTypes != null && acceptTypes.length > 0) {
+                    List<String> validTypes = new ArrayList<String>();
+                    for (String type : acceptTypes) {
+                        if (type != null && !type.trim().isEmpty() && type.contains("/")) {
+                            validTypes.add(type.trim());
+                        }
+                    }
+                    if (validTypes.size() == 1) {
+                        intent.setType(validTypes.get(0));
+                    } else if (validTypes.size() > 1) {
+                        intent.putExtra(Intent.EXTRA_MIME_TYPES, validTypes.toArray(new String[0]));
+                    }
+                }
+            } catch (Throwable ignored) {
+                // Keep default */* openable picker configuration.
+            }
+        }
+        return intent;
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_CODE_FILE_CHOOSER) {
+            return;
+        }
+        ValueCallback<Uri[]> callback = pendingFilePathCallback;
+        pendingFilePathCallback = null;
+        if (callback == null) {
+            return;
+        }
+        Uri[] results = extractSelectedContentUris(resultCode, data);
+        try {
+            callback.onReceiveValue(results);
+        } catch (Throwable t) {
+            Log.w(TAG, "delivering file chooser result failed", t);
+        }
+    }
+
+    static Uri[] extractSelectedContentUris(int resultCode, Intent data) {
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            return null;
+        }
+        List<Uri> uris = new ArrayList<Uri>();
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            for (int i = 0; i < clipData.getItemCount(); i++) {
+                ClipData.Item item = clipData.getItemAt(i);
+                if (item != null && isSafeUploadUri(item.getUri())) {
+                    uris.add(item.getUri());
+                }
+            }
+        }
+        Uri single = data.getData();
+        if (uris.isEmpty() && isSafeUploadUri(single)) {
+            uris.add(single);
+        }
+        if (uris.isEmpty()) {
+            try {
+                Uri[] parsed = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                if (parsed != null) {
+                    for (Uri uri : parsed) {
+                        if (isSafeUploadUri(uri)) {
+                            uris.add(uri);
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // Fallback only.
+            }
+        }
+        return uris.isEmpty() ? null : uris.toArray(new Uri[0]);
+    }
+
+    private static boolean isSafeUploadUri(Uri uri) {
+        return uri != null && "content".equalsIgnoreCase(uri.getScheme());
+    }
+
+    private void cancelPendingFileChooser() {
+        ValueCallback<Uri[]> callback = pendingFilePathCallback;
+        pendingFilePathCallback = null;
+        if (callback != null) {
+            try {
+                callback.onReceiveValue(null);
+            } catch (Throwable ignored) {
+                // ignore
+            }
+        }
     }
 
     @Override
     public void onFileChooserBlocked() {
-        // Message already sent by the chrome client.
+        onMessage("Could not open file picker");
     }
 
     @Override

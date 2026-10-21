@@ -128,10 +128,23 @@ public class UrlPolicyTest {
         };
         for (String url : hostile) {
             for (UrlPolicy.TrafficClass trafficClass : UrlPolicy.TrafficClass.values()) {
-                if (trafficClass == UrlPolicy.TrafficClass.SUBRESOURCE && url.startsWith("data:")) {
-                    // data: is inert and is deliberately allowed for sub-resources; it is refused as a
-                    // document, which the table asserts separately.
-                    continue;
+                if (trafficClass == UrlPolicy.TrafficClass.SUBRESOURCE) {
+                    if (url.startsWith("data:")) {
+                        // data: is inert and is deliberately allowed for sub-resources; it is refused as a
+                        // document, which the table asserts separately.
+                        continue;
+                    }
+                    if ("https://evil.example/".equals(url)
+                            || "https://arena.ai.evil.example/".equals(url)
+                            || "https://sub.arena.ai/".equals(url)
+                            || "https://mail.arena.ai/".equals(url)
+                            || "https://xn--rena-4qa.ai/".equals(url)) {
+                        // Valid canonical HTTPS hosts on port 443 are allowed as sub-resources for
+                        // backend connectivity, while remaining strictly refused as DOCUMENT & SUBDOCUMENT.
+                        assertTrue("valid HTTPS host must be allowed as subresource: " + url,
+                                UrlPolicy.evaluate(url, PRODUCTION, trafficClass).isAllowed());
+                        continue;
+                    }
                 }
                 PolicyResult result = UrlPolicy.evaluate(url, PRODUCTION, trafficClass);
                 assertFalse("must never be allowed (" + trafficClass + "): " + url, result.isAllowed());

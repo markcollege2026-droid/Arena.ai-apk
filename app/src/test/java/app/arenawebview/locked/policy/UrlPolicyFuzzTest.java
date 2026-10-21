@@ -165,13 +165,20 @@ public class UrlPolicyFuzzTest {
                     "http://" + entry.host() + root,
                     "https://" + entry.host() + ":8443" + root,
                     "https://" + entry.host() + "\\@evil.example" + root,
-                    "https://" + entry.host() + ".evil.example" + root,
-                    "https://evil" + entry.host() + root,
                     "https:\\\\" + entry.host() + root,
             }) {
                 assertFalse(bad, CONFIG.evaluateRequest(bad).isAllowed());
                 assertFalse(bad, CONFIG.evaluateNavigation(bad).isAllowed());
                 assertFalse(bad, CONFIG.evaluateSubdocument(bad).isAllowed());
+            }
+
+            for (String foreignHost : new String[]{
+                    "https://" + entry.host() + ".evil.example" + root,
+                    "https://evil" + entry.host() + root,
+            }) {
+                assertFalse(foreignHost, CONFIG.evaluateNavigation(foreignHost).isAllowed());
+                assertFalse(foreignHost, CONFIG.evaluateSubdocument(foreignHost).isAllowed());
+                assertTrue(foreignHost, CONFIG.evaluateRequest(foreignHost).isAllowed());
             }
         }
     }
@@ -182,18 +189,27 @@ public class UrlPolicyFuzzTest {
                                                PolicyResult result, Set<String> allowedHosts, int iteration) {
         String where = " for " + trafficClass + " " + visible(url) + " (seed " + SEED + ", iteration "
                 + iteration + ")";
+        String browserView = whatwgTrim(url);
+        boolean isBlob = browserView.regionMatches(true, 0, "blob:", 0, 5);
         AllowEntry entry = result.matchedEntry();
-        assertNotNull("an allowed network URL must name its entry" + where, entry);
-        assertTrue("reported host must be allow-listed" + where, allowedHosts.contains(result.canonicalHost()));
-        assertEquals("entry and reported host must agree" + where, entry.host(), result.canonicalHost());
+        if (trafficClass != UrlPolicy.TrafficClass.SUBRESOURCE || isBlob) {
+            assertNotNull("an allowed navigation/subdocument/blob URL must name its entry" + where, entry);
+            assertTrue("reported host must be allow-listed" + where, allowedHosts.contains(result.canonicalHost()));
+            assertEquals("entry and reported host must agree" + where, entry.host(), result.canonicalHost());
+        } else {
+            assertNotNull("reported host must be canonical" + where,
+                    UrlPolicy.canonicalizeHost(result.canonicalHost()));
+            if (entry != null) {
+                assertEquals("entry and reported host must agree" + where, entry.host(), result.canonicalHost());
+            }
+        }
 
         // The WHATWG parser (and therefore Chromium) deletes ASCII tab/newline anywhere and strips leading
         // and trailing C0 controls and spaces before it looks at a URL. The policy mirrors exactly that
         // and nothing more, so the browser view of the string is re-derived here the same way; any
         // *other* control character that survives is checked below.
-        String browserView = whatwgTrim(url);
         String body;
-        if (browserView.regionMatches(true, 0, "blob:", 0, 5)) {
+        if (isBlob) {
             assertEquals("blobs are sub-resources only" + where, UrlPolicy.TrafficClass.SUBRESOURCE, trafficClass);
             body = browserView.substring(5);
         } else {
@@ -240,7 +256,9 @@ public class UrlPolicyFuzzTest {
             assertFalse("an asset host may never become the page" + where, entry.isResourceOnly());
         }
 
-        if (!entry.pathPrefixes().isEmpty() && !browserView.regionMatches(true, 0, "blob:", 0, 5)) {
+        if (trafficClass != UrlPolicy.TrafficClass.SUBRESOURCE
+                && !entry.pathPrefixes().isEmpty()
+                && !isBlob) {
             String path = afterScheme.substring(end);
             int cut = path.length();
             for (int k = 0; k < path.length(); k++) {

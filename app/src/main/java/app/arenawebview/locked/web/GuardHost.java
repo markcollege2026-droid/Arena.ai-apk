@@ -108,10 +108,23 @@ public interface GuardHost {
      */
     void onSignInWindowNavigated(String url);
 
-    /** A download was refused (nothing is ever handed to a download manager or browser). */
+    /** A download passed the policy and was handed to the host to execute inside the app. */
+    void onDownloadRequested(String url, String userAgent, String contentDisposition,
+                             String mimeType, long contentLength);
+
+    /** A download was refused because its URL failed policy verification. */
     void onDownloadBlocked(String url, String mimeType);
 
-    /** The page asked to open a local file picker; refused because it would leave the app. */
+    /**
+     * The page asked to open a file picker for an upload.
+     *
+     * @return true when the host accepted ownership of {@code filePathCallback} and started the file
+     *         picker; false when the caller must complete {@code filePathCallback} with {@code null}.
+     */
+    boolean onFileChooserRequested(android.webkit.ValueCallback<android.net.Uri[]> filePathCallback,
+                                   WebChromeClient.FileChooserParams fileChooserParams);
+
+    /** A file picker request could not be handled and was refused. */
     void onFileChooserBlocked();
 
     /** Camera/microphone request refused. */

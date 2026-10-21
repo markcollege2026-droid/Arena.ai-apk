@@ -55,7 +55,7 @@ public class TunnelPolicyTest {
     }
 
     @Test
-    public void hostsOutsideTheListAreRefusedWhateverTheirShape() {
+    public void externalBackendHostsAreAllowedAsTunnelsWhileRefusedAsPages() {
         List<String> hosts = Arrays.asList(
                 "evil.example", "arena.ai.evil.example", "evilarena.ai", "arena.ai-evil.example",
                 "www.arena.ai.evil.example", "xn--rena-4qa.ai", "google.com", "google.co.il",
@@ -63,9 +63,12 @@ public class TunnelPolicyTest {
                 "oauth2.googleapis.com", "gstatic.com", "recaptcha.net", "fonts.googleapis.com",
                 "cdn.arena.ai.example", "arena.ai.localhost", "arena.ai.local");
         for (String host : hosts) {
-            PolicyResult result = POLICY.evaluateTunnel(host, 443);
-            assertFalse(host, result.isAllowed());
-            assertEquals(host, BlockReason.HOST_NOT_ALLOWED, result.reason());
+            PolicyResult tunnel = POLICY.evaluateTunnel(host, 443);
+            assertTrue(host + " tunnel must be allowed on 443", tunnel.isAllowed());
+            assertFalse(host + " must still be refused as a top-level page",
+                    POLICY.evaluateNavigation("https://" + host + "/").isAllowed());
+            assertEquals(host, BlockReason.HOST_NOT_ALLOWED,
+                    POLICY.evaluateNavigation("https://" + host + "/").reason());
         }
     }
 
@@ -80,7 +83,7 @@ public class TunnelPolicyTest {
         assertEquals(BlockReason.INVALID_HOST, POLICY.evaluateTunnel("2130706433", 443).reason());
         assertEquals(BlockReason.INVALID_HOST, POLICY.evaluateTunnel("localhost", 443).reason());
         assertEquals(BlockReason.INVALID_HOST, POLICY.evaluateTunnel("metadata", 443).reason());
-        assertEquals(BlockReason.HOST_NOT_ALLOWED, POLICY.evaluateTunnel("metadata.google.internal", 443).reason());
+        assertEquals(BlockReason.INVALID_HOST, POLICY.evaluateTunnel("arena_ai.example", 443).reason());
     }
 
     @Test
@@ -104,20 +107,19 @@ public class TunnelPolicyTest {
 
     @Test
     public void refusedResultsCarryEnoughForTheDiagnosticsReport() {
-        PolicyResult result = POLICY.evaluateTunnel("evil.example", 443);
-        assertEquals("evil.example", result.canonicalHost());
-        assertEquals("connect://evil.example:443", result.rawUrl());
+        PolicyResult result = POLICY.evaluateTunnel("arena.ai", 8443);
+        assertEquals("arena.ai", result.canonicalHost());
+        assertEquals("connect://arena.ai:8443", result.rawUrl());
         assertNotNull(result.describe());
-        assertTrue(result.describe().contains("HOST_NOT_ALLOWED"));
+        assertTrue(result.describe().contains("PORT_NOT_ALLOWED"));
     }
 
     /**
-     * On every URL in the shared case table, the tunnel decision for the URL's host is never looser than
-     * the navigation decision: whenever the tunnel would refuse the host, the navigation refuses the URL;
-     * and whenever the navigation refuses for a host reason, so does the tunnel.
+     * On every URL in the shared case table, whenever the tunnel refuses the URL's host, both navigation
+     * and subresource requests refuse the URL as well.
      */
     @Test
-    public void tunnelDecisionIsNeverLooserThanTheNavigationDecisionOnTheHost() {
+    public void tunnelDecisionAgreesWithHostValidation() {
         List<PolicyCases.Case> cases = new java.util.ArrayList<PolicyCases.Case>(PolicyCases.all());
         cases.addAll(PolicyCases.withGoogleSignInAndCaptchaEnabled());
         int compared = 0;
@@ -131,10 +133,6 @@ public class TunnelPolicyTest {
             compared++;
             if (!tunnel.isAllowed()) {
                 assertFalse("tunnel refused " + host + " but navigation allowed " + c.url, navigation.isAllowed());
-            } else if (!navigation.isAllowed()) {
-                BlockReason reason = navigation.reason();
-                assertTrue(c.url + " -> " + navigation.describe() + " but the tunnel allowed " + host,
-                        reason == BlockReason.PORT_NOT_ALLOWED || reason.category() != BlockReason.Category.HOST);
             }
         }
         assertTrue("the case table should give plenty of comparisons, got " + compared, compared > 100);
