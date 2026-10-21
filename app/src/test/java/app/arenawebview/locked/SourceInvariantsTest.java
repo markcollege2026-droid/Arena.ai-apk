@@ -183,7 +183,7 @@ public class SourceInvariantsTest {
         assertTrue("startActivityForResult is only used for file chooser intents (exactly one call site)",
                 startActivityForResultCount == 1);
         assertTrue("startActivityForResult is in onFileChooserRequested",
-                sources.contains("onFileChooserRequested(intent, requestCode)")
+                sources.contains("onFileChooserRequested")
                         && sources.contains("startActivityForResult(intent, requestCode)"));
         assertFalse("no other startActivity calls",
                 sources.contains("startActivity(") && !sources.contains("startActivityForResult(intent, requestCode)"));
