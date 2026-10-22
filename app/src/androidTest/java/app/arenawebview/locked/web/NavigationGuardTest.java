@@ -224,4 +224,90 @@ public class NavigationGuardTest {
         assertNull(client.shouldInterceptRequest(webView,
                 FakeWebResourceRequest.subresource("data:image/png;base64,iVBORw0KGgo=")));
     }
+
+    @Test
+    public void sidebarGuardHidesPromoCardsAndMakesSidebarScrollable() throws Exception {
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicReference<String> probe =
+                new java.util.concurrent.atomic.AtomicReference<String>();
+        final String html = """
+                <!doctype html>
+                <html><body>
+                  <aside data-sidebar="sidebar" style="overflow:hidden;height:320px;display:flex;flex-direction:column;">
+                    <nav data-sidebar="header">
+                      <a id="nav-agent" href="/agent">Agent</a>
+                    </nav>
+                    <div id="agent-promo" style="height:260px;">
+                      <h4>Try Agent Mode</h4>
+                      <p>Build and test full apps in a sandbox.</p>
+                      <button id="dismiss-agent" aria-label="Dismiss" onclick="window.__dismissedAgent = true;">×</button>
+                    </div>
+                    <div id="chat-list" data-sidebar="content" style="display:flex;flex-direction:column;overflow:hidden;min-height:0;flex:1;">
+                      <div id="group-today" data-sidebar="group" style="display:flex;flex-direction:column;">
+                        <div data-sidebar="group-content" style="display:flex;flex-direction:column;">
+                          <a id="chat-1" href="/c/111" style="height:48px;display:block;">Today conversation 1</a>
+                          <a href="/c/112" style="height:48px;display:block;">Today conversation 2</a>
+                          <a href="/c/113" style="height:48px;display:block;">Today conversation 3</a>
+                          <a href="/c/114" style="height:48px;display:block;">Today conversation 4</a>
+                        </div>
+                      </div>
+                      <div id="group-earlier" data-sidebar="group" style="display:flex;flex-direction:column;">
+                        <div data-sidebar="group-content" style="display:flex;flex-direction:column;">
+                          <a id="chat-2" href="/c/222" style="height:48px;display:block;">Earlier conversation 1</a>
+                          <a href="/c/223" style="height:48px;display:block;">Earlier conversation 2</a>
+                          <a href="/c/224" style="height:48px;display:block;">Earlier conversation 3</a>
+                          <a href="/c/225" style="height:48px;display:block;">Earlier conversation 4</a>
+                        </div>
+                      </div>
+                    </div>
+                    <div data-sidebar="footer">
+                      <div id="yt-promo">
+                        <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">
+                          <img src="https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" />
+                          <span>Watch on YouTube</span>
+                        </a>
+                      </div>
+                    </div>
+                  </aside>
+                </body></html>
+                """;
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
+            @Override
+            public void run() {
+                webView.setWebViewClient(new android.webkit.WebViewClient() {
+                    @Override
+                    public void onPageFinished(WebView view, String url) {
+                        client.injectSidebarGuard(view);
+                        view.evaluateJavascript("""
+                                (function() {
+                                  var agentPromo = document.getElementById('agent-promo');
+                                  var ytPromo = document.getElementById('yt-promo');
+                                  var navAgent = document.getElementById('nav-agent');
+                                  var chat1 = document.getElementById('chat-1');
+                                  var chatList = document.getElementById('chat-list');
+                                  var g1 = document.getElementById('group-today').getBoundingClientRect();
+                                  var g2 = document.getElementById('group-earlier').getBoundingClientRect();
+                                  var noOverlap = g2.top >= g1.bottom - 1;
+                                  return [
+                                    window.getComputedStyle(agentPromo).display,
+                                    window.getComputedStyle(ytPromo).display,
+                                    window.__dismissedAgent === true ? 'dismissed' : 'not-dismissed',
+                                    window.getComputedStyle(navAgent).display,
+                                    window.getComputedStyle(chat1).display,
+                                    window.getComputedStyle(chatList).overflowY,
+                                    noOverlap ? 'no-overlap' : ('overlap:' + g1.bottom + '>' + g2.top)
+                                  ].join('|');
+                                })()
+                                """, value -> {
+                            probe.set(value);
+                            latch.countDown();
+                        });
+                    }
+                });
+                webView.loadDataWithBaseURL("https://arena.ai/", html, "text/html", "utf-8", null);
+            }
+        });
+        assertTrue("sidebar guard probe timed out", latch.await(15, java.util.concurrent.TimeUnit.SECONDS));
+        assertEquals("\"none|none|dismissed|inline|block|auto|no-overlap\"", probe.get());
+    }
 }
