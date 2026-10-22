@@ -48,6 +48,168 @@ public class ArenaWebViewClient extends WebViewClient {
     /** Refusals already written to logcat, so a busy page cannot flood the log. */
     private static final int MAX_LOGGED_REFUSALS = 200;
 
+    /**
+     * Injected into first-party Arena.ai pages to:
+     * (1) dismiss and hide left-sidebar promotional/upsell pop-up cards (e.g. "Try Agent Mode" or
+     *     YouTube video promos) so they do not cover the sidebar on small screens, and
+     * (2) enforce vertical scrollability on both the outer sidebar and the conversation history
+     *     container so previous conversations are always reachable.
+     */
+    static final String SIDEBAR_GUARD_SCRIPT =
+            "(function() {\n"
+            + "  try {\n"
+            + "    var STYLE_ID = 'arena-apk-sidebar-guard';\n"
+            + "    var CSS = [\n"
+            + "      '[data-sidebar=\"content\"], [data-slot=\"sidebar-content\"] {',\n"
+            + "      '  overflow-y: auto !important;',\n"
+            + "      '  overflow-x: hidden !important;',\n"
+            + "      '  -webkit-overflow-scrolling: touch !important;',\n"
+            + "      '  overscroll-behavior-y: contain !important;',\n"
+            + "      '  flex: 1 1 0% !important;',\n"
+            + "      '  min-height: 160px !important;',\n"
+            + "      '}',\n"
+            + "      '[data-sidebar=\"group\"], [data-slot=\"sidebar-group\"],',\n"
+            + "      '[data-sidebar=\"group-content\"], [data-slot=\"sidebar-group-content\"] {',\n"
+            + "      '  flex-shrink: 0 !important;',\n"
+            + "      '}',\n"
+            + "      '[data-sidebar=\"footer\"], [data-slot=\"sidebar-footer\"] {',\n"
+            + "      '  flex-shrink: 1 !important;',\n"
+            + "      '  max-height: 25dvh !important;',\n"
+            + "      '  overflow-y: auto !important;',\n"
+            + "      '}',\n"
+            + "      '[data-arena-hidden-promo=\"1\"],',\n"
+            + "      'aside a[href*=\"youtube.com\"], aside a[href*=\"youtu.be\"],',\n"
+            + "      '[data-sidebar] a[href*=\"youtube.com\"], [data-sidebar] a[href*=\"youtu.be\"],',\n"
+            + "      '[data-slot*=\"sidebar\"] a[href*=\"youtube.com\"], [data-slot*=\"sidebar\"] a[href*=\"youtu.be\"],',\n"
+            + "      'aside iframe[src*=\"youtube.com\"], [data-sidebar] iframe[src*=\"youtube.com\"] {',\n"
+            + "      '  display: none !important;',\n"
+            + "      '}'\n"
+            + "    ].join('\\n');\n"
+            + "    function ensureStyle() {\n"
+            + "      var root = document.head || document.documentElement;\n"
+            + "      if (!root) return;\n"
+            + "      var style = document.getElementById(STYLE_ID);\n"
+            + "      if (!style) {\n"
+            + "        style = document.createElement('style');\n"
+            + "        style.id = STYLE_ID;\n"
+            + "        root.appendChild(style);\n"
+            + "      }\n"
+            + "      if (style.textContent !== CSS) {\n"
+            + "        style.textContent = CSS;\n"
+            + "      }\n"
+            + "    }\n"
+            + "    function isProtectedSidebarStructure(el) {\n"
+            + "      if (!el || el.nodeType !== 1) return true;\n"
+            + "      var tag = el.tagName ? el.tagName.toLowerCase() : '';\n"
+            + "      if (tag === 'aside' || tag === 'nav' || tag === 'body' || tag === 'html' || tag === 'ul' || tag === 'li') return true;\n"
+            + "      var ds = (el.getAttribute('data-sidebar') || '') + ' ' + (el.getAttribute('data-slot') || '');\n"
+            + "      if (ds.indexOf('sidebar') >= 0 && ds.indexOf('footer') < 0) {\n"
+            + "        if (ds.indexOf('content') >= 0 || ds.indexOf('header') >= 0 || ds.indexOf('group') >= 0 || ds.indexOf('menu') >= 0 || ds.trim() === 'sidebar') {\n"
+            + "          return true;\n"
+            + "        }\n"
+            + "      }\n"
+            + "      if (el.closest('[data-sidebar=\"content\"], [data-slot=\"sidebar-content\"], [data-sidebar=\"group\"], [data-slot=\"sidebar-group\"], [data-sidebar=\"menu\"], [data-slot=\"sidebar-menu\"], [data-sidebar=\"header\"], [data-slot=\"sidebar-header\"], nav')) {\n"
+            + "        return true;\n"
+            + "      }\n"
+            + "      if (el.querySelector('[data-sidebar=\"content\"], [data-slot=\"sidebar-content\"], [data-sidebar=\"group\"], [data-slot=\"sidebar-group\"], nav')) {\n"
+            + "        return true;\n"
+            + "      }\n"
+            + "      var chatLinks = el.querySelectorAll('a[href^=\"/c/\"], a[href^=\"/chat/\"]');\n"
+            + "      if (chatLinks && chatLinks.length > 0) {\n"
+            + "        return true;\n"
+            + "      }\n"
+            + "      return false;\n"
+            + "    }\n"
+            + "    function findCloseButton(card) {\n"
+            + "      var buttons = card.querySelectorAll('button, [role=\"button\"]');\n"
+            + "      for (var i = 0; i < buttons.length; i++) {\n"
+            + "        var btn = buttons[i];\n"
+            + "        var label = ((btn.getAttribute('aria-label') || '') + ' ' + (btn.getAttribute('title') || '') + ' ' + (btn.textContent || '')).trim().toLowerCase();\n"
+            + "        if (label === 'close' || label === 'dismiss' || label === '×' || label === 'x' || label.indexOf('close') >= 0 || label.indexOf('dismiss') >= 0) {\n"
+            + "          return btn;\n"
+            + "        }\n"
+            + "        var svg = btn.querySelector('svg');\n"
+            + "        if (svg && (btn.textContent || '').trim() === '') {\n"
+            + "          var cls = (svg.getAttribute('class') || '').toLowerCase();\n"
+            + "          var html = svg.innerHTML || '';\n"
+            + "          if (cls.indexOf('lucide-x') >= 0 || html.indexOf('M18 6 6 18') >= 0 || html.indexOf('M18 6L6 18') >= 0 || html.indexOf('M6 6l12 12') >= 0) {\n"
+            + "            return btn;\n"
+            + "          }\n"
+            + "        }\n"
+            + "      }\n"
+            + "      return null;\n"
+            + "    }\n"
+            + "    function hidePromoCard(card) {\n"
+            + "      if (!card || isProtectedSidebarStructure(card)) return false;\n"
+            + "      var closeBtn = findCloseButton(card);\n"
+            + "      if (closeBtn && !card.getAttribute('data-arena-dismissed')) {\n"
+            + "        card.setAttribute('data-arena-dismissed', '1');\n"
+            + "        try { closeBtn.click(); } catch (e) {}\n"
+            + "      }\n"
+            + "      card.setAttribute('data-arena-hidden-promo', '1');\n"
+            + "      card.style.setProperty('display', 'none', 'important');\n"
+            + "      return true;\n"
+            + "    }\n"
+            + "    function findPromoCardAncestor(node, sidebarRoot) {\n"
+            + "      var cur = node;\n"
+            + "      var candidate = null;\n"
+            + "      while (cur && cur !== sidebarRoot && cur !== document.body) {\n"
+            + "        if (isProtectedSidebarStructure(cur)) break;\n"
+            + "        candidate = cur;\n"
+            + "        var parent = cur.parentElement;\n"
+            + "        if (!parent || parent === sidebarRoot || isProtectedSidebarStructure(parent)) {\n"
+            + "          break;\n"
+            + "        }\n"
+            + "        cur = parent;\n"
+            + "      }\n"
+            + "      return candidate;\n"
+            + "    }\n"
+            + "    function scanSidebar() {\n"
+            + "      ensureStyle();\n"
+            + "      var sidebars = document.querySelectorAll('aside, [data-sidebar=\"sidebar\"], [data-slot=\"sidebar\"], [data-sidebar=\"footer\"], [data-slot=\"sidebar-footer\"]');\n"
+            + "      for (var s = 0; s < sidebars.length; s++) {\n"
+            + "        var sidebar = sidebars[s];\n"
+            + "        var ytNodes = sidebar.querySelectorAll('a[href*=\"youtube.com\"], a[href*=\"youtu.be\"], iframe[src*=\"youtube.com\"], iframe[src*=\"youtu.be\"], img[src*=\"ytimg.com\"], img[src*=\"youtube.com\"]');\n"
+            + "        for (var y = 0; y < ytNodes.length; y++) {\n"
+            + "          var ytCard = findPromoCardAncestor(ytNodes[y], sidebar);\n"
+            + "          hidePromoCard(ytCard || ytNodes[y]);\n"
+            + "        }\n"
+            + "        var blocks = sidebar.querySelectorAll('div, section, article');\n"
+            + "        for (var b = 0; b < blocks.length; b++) {\n"
+            + "          var el = blocks[b];\n"
+            + "          if (el.getAttribute('data-arena-hidden-promo') === '1') continue;\n"
+            + "          if (isProtectedSidebarStructure(el)) continue;\n"
+            + "          var text = (el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();\n"
+            + "          if (!text || text.length > 500) continue;\n"
+            + "          var isAgentPromo = text.indexOf('try agent mode') >= 0\n"
+            + "              || (text.indexOf('agent mode') >= 0 && (text.indexOf('try') >= 0 || text.indexOf('new') >= 0 || text.indexOf('introduce') >= 0 || text.indexOf('introducing') >= 0));\n"
+            + "          var isVideoPromo = text.indexOf('watch on youtube') >= 0 || text.indexOf('youtube') >= 0;\n"
+            + "          var closeBtn = findCloseButton(el);\n"
+            + "          var inFooter = !!el.closest('[data-sidebar=\"footer\"], [data-slot=\"sidebar-footer\"]');\n"
+            + "          if (isAgentPromo || isVideoPromo || (inFooter && closeBtn)) {\n"
+            + "            var targetCard = findPromoCardAncestor(el, sidebar) || el;\n"
+            + "            hidePromoCard(targetCard);\n"
+            + "          }\n"
+            + "        }\n"
+            + "      }\n"
+            + "    }\n"
+            + "    scanSidebar();\n"
+            + "    if (!window.__arenaSidebarGuardInstalled) {\n"
+            + "      window.__arenaSidebarGuardInstalled = true;\n"
+            + "      var observer = new MutationObserver(function() {\n"
+            + "        scanSidebar();\n"
+            + "      });\n"
+            + "      observer.observe(document.documentElement || document.body, {\n"
+            + "        childList: true,\n"
+            + "        subtree: true\n"
+            + "      });\n"
+            + "    }\n"
+            + "    return 'installed';\n"
+            + "  } catch (e) {\n"
+            + "    return 'error:' + e;\n"
+            + "  }\n"
+            + "})()";
+
     private final Set<String> loggedRefusals =
             Collections.synchronizedSet(new LinkedHashSet<String>());
 
@@ -221,6 +383,9 @@ public class ArenaWebViewClient extends WebViewClient {
         super.onPageFinished(view, url);
         verifyFinalUrl(view, url, "onPageFinished");
         if (host.isPrimaryWebView(view)) {
+            if (host.policy().isProductNavigation(url)) {
+                injectSidebarGuard(view);
+            }
             host.onPageFinished(url);
         }
     }
@@ -240,6 +405,21 @@ public class ArenaWebViewClient extends WebViewClient {
             // be able to reach verified pages.
             view.clearHistory();
             host.onRecoveryRequired("history:" + (result.reason() == null ? "?" : result.reason().name()), url);
+            return;
+        }
+        if (host.policy().isProductNavigation(url)) {
+            injectSidebarGuard(view);
+        }
+    }
+
+    void injectSidebarGuard(WebView view) {
+        if (view == null) {
+            return;
+        }
+        try {
+            view.evaluateJavascript(SIDEBAR_GUARD_SCRIPT, null);
+        } catch (Throwable ignored) {
+            // Detached or uninitialised WebView in unit/synthetic tests.
         }
     }
 
