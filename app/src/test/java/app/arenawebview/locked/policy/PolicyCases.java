@@ -68,12 +68,9 @@ public final class PolicyCases {
         both(cases, "live blog on the main host", "https://arena.ai/blog/post", true, null);
         // Retrieved 2026-11-14: the legacy blog/news hosts answer Cloudflare 522 and indexable. is an
         // object bucket with no browsable root, so the three are assets only - never a page.
-        navBlockedSubAllowed(cases, "demoted legacy blog host", "https://blog.arena.ai/post",
-                BlockReason.DOCUMENT_NOT_ALLOWED);
-        navBlockedSubAllowed(cases, "demoted legacy news host", "https://news.arena.ai/post",
-                BlockReason.DOCUMENT_NOT_ALLOWED);
-        navBlockedSubAllowed(cases, "demoted pre-render bucket", "https://indexable.arena.ai/",
-                BlockReason.DOCUMENT_NOT_ALLOWED);
+        demotedAssetHost(cases, "demoted legacy blog host", "https://blog.arena.ai/post");
+        demotedAssetHost(cases, "demoted legacy news host", "https://news.arena.ai/post");
+        demotedAssetHost(cases, "demoted pre-render bucket", "https://indexable.arena.ai/");
         both(cases, "help host", "https://help.arena.ai/article", true, null);
         both(cases, "status host", "https://status.arena.ai/", true, null);
         both(cases, "trust host", "https://trust.arena.ai/", true, null);
@@ -415,6 +412,20 @@ public final class PolicyCases {
 
     private static void frame(List<Case> out, String name, String url, boolean allowed, BlockReason reason) {
         out.add(new Case(name, url, SUBDOCUMENT, allowed, reason));
+    }
+
+    /**
+     * A first-party host that has been demoted from a page to an asset.
+     *
+     * <p>It may never become the visible document, but it stays embeddable as a frame and reachable as a
+     * sub-resource - exactly like the CAPTCHA widget hosts, and for the same reason: an asset entry
+     * describes what may be <em>fetched</em>, and only the document question is gated on the role. The
+     * demotion is what stops the app ever being navigated to a host that answers 404 or 522.</p>
+     */
+    private static void demotedAssetHost(List<Case> out, String name, String url) {
+        out.add(new Case(name + " (document)", url, DOCUMENT, false, BlockReason.DOCUMENT_NOT_ALLOWED));
+        out.add(new Case(name + " (subdocument)", url, SUBDOCUMENT, true, null));
+        out.add(new Case(name + " (subresource)", url, SUBRESOURCE, true, null));
     }
 
     private static void navBlockedSubAllowed(List<Case> out, String name, String url, BlockReason reason) {
