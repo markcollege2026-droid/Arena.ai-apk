@@ -7,9 +7,10 @@
   * trust-anchors = system only: no user-added CAs, so an installed "debug" proxy certificate cannot
     be used to intercept the app's traffic.
   * No <debug-overrides> block exists in this file, so debug builds are just as strict as release.
-  * The <domain-config> entries mirror the hosts this build may display as pages: Arena.ai's own hosts
-    plus accounts.google.com, which the "Continue with Google" sign-in hand-off needs. Asset-only hosts
-    (CAPTCHA widgets, Google's static assets) are covered by the base config - they get no special
+  * The <domain-config> entries mirror the hosts this build may display as pages: Arena.ai's own hosts,
+    accounts.google.com (the "Continue with Google" sign-in hand-off) and the Agent Mode connectors'
+    OAuth authorize endpoints. Asset-only hosts (CAPTCHA widgets, Google's static assets, and the
+    demoted indexable./blog./news.arena.ai) are covered by the base config - they get no special
     treatment and no looser rules.
 -->
 <network-security-config>
@@ -25,13 +26,18 @@
         <domain includeSubdomains="false">cdn.arena.ai</domain>
         <domain includeSubdomains="false">agent.arena.ai</domain>
         <domain includeSubdomains="false">code.arena.ai</domain>
-        <domain includeSubdomains="false">indexable.arena.ai</domain>
-        <domain includeSubdomains="false">blog.arena.ai</domain>
-        <domain includeSubdomains="false">news.arena.ai</domain>
         <domain includeSubdomains="false">help.arena.ai</domain>
         <domain includeSubdomains="false">status.arena.ai</domain>
         <domain includeSubdomains="false">trust.arena.ai</domain>
         <domain includeSubdomains="false">accounts.google.com</domain>
+        <!-- Agent Mode connectors: page-capable, but confined by the runtime policy to their OAuth
+             authorize endpoint only (see ArenaAllowlist.connectorEntries). -->
+        <domain includeSubdomains="false">github.com</domain>
+        <domain includeSubdomains="false">api.notion.com</domain>
+        <domain includeSubdomains="false">linear.app</domain>
+        <domain includeSubdomains="false">api.supabase.com</domain>
+        <domain includeSubdomains="false">vercel.com</domain>
+        <domain includeSubdomains="false">www.dropbox.com</domain>
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

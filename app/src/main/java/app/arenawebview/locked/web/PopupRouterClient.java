@@ -109,16 +109,22 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             return false;
         }
 
-        // --- main frame: only a sign-in step or an Arena.ai page may live here --------------------
+        // --- main frame: only a sign-in/connector step or an Arena.ai page may live here -----------
+        // isSignInNavigation() covers both shapes: Google's account pages (no path pin) and a
+        // connector's OAuth authorize endpoint (path-pinned, so the provider's own site is still not
+        // reachable). A connector window therefore behaves exactly like the Google hand-off: it stays
+        // open, it is policed on every hop, and it can only ever show those two kinds of page plus
+        // Arena.ai itself.
         boolean signInStep = host.policy().isSignInNavigation(url);
         boolean sitePage = host.policy().isProductNavigation(url);
         if (promotedToSignInWindow ? (signInStep || sitePage) : signInStep) {
-            // The sign-in hand-off. The window has to stay alive because Google's page returns its result
-            // to the page that opened it through window.opener/postMessage - a flow that only works if the
-            // window it opened still exists.
+            // The sign-in / connector hand-off. The window has to stay alive because the provider's page
+            // returns its result to the page that opened it through window.opener/postMessage - a flow
+            // that only works if the window it opened still exists.
             //
             // Two kinds of navigation belong to that hand-off and both stay in this window:
-            //   1. Google's own pages (the OAuth consent page, the identifier and password steps), and
+            //   1. the provider's own pages (Google's identifier/password/consent steps, or a connector's
+            //      authorize endpoint and its sign-in steps), and
             //   2. the return hop to Arena.ai's callback URL, which is where the site reads the result and
             //      usually closes the window itself with window.close().
             if (!promotedToSignInWindow) {

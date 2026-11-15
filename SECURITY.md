@@ -28,7 +28,8 @@ is Google's server-side policy and this app does not work around it (README §3,
 | Component | Trusted? | Notes |
 | --- | --- | --- |
 | `arena.ai` and the first-party hosts in the allow-list | yes, as the site the user asked for | TLS with system trust anchors only |
-| `accounts.google.com` (sign-in pages) and the Google/Cloudflare widget hosts (assets only) | as much as any third party is ever trusted | reachable only as far as the two capability switches allow; the only third-party *page* is Google's account host, and only inside the in-app sign-in window |
+| `accounts.google.com` (sign-in pages) and the Google/Cloudflare widget hosts (assets only) | as much as any third party is ever trusted | reachable only as far as the two capability switches allow; Google's account host is the only *unpinned* third-party page, and only inside the in-app sign-in window |
+| The six Agent Mode connector hosts (`github.com`, `api.notion.com`, `linear.app`, `api.supabase.com`, `vercel.com`, `www.dropbox.com`) | as much as any third party is ever trusted | each is a `Role.CONNECTOR` entry pinned to its **exact** OAuth `authorize` path (plus that endpoint's own sign-in steps); the provider's dashboard, repositories, files, mail and token endpoint are refused as pages. `ENABLE_AGENT_CONNECTORS=false` removes all six |
 | Android WebView (Chromium) | yes | kept up to date by the Play Store, not bundled by this app; Safe Browsing enabled |
 | The user's network | no | HTTPS only, no user CAs trusted, no cleartext fallback |
 | Everything else on the network | no | unreachable by policy; requests are refused before they are sent |
@@ -122,6 +123,20 @@ is Google's server-side policy and this app does not work around it (README §3,
   does not use HTTP/3 (QUIC cannot traverse a `CONNECT` tunnel; HTTP/1.1 and HTTP/2 are unaffected),
   and a device-wide HTTP proxy, if one is configured, is chained through by the guard rather than
   bypassed.
+* **Connectors are only as reachable as their authorize endpoint.** Linking an Agent Mode connector
+  inside the wrapper works up to the provider's authorize page; the flow then returns to Arena.ai
+  through the window's own `window.opener`, which is what the site expects. If a provider's page insists
+  on a full tab, a pop-up-of-a-pop-up, or a path outside the pinned set (a moved endpoint, a regional
+  variant), the app refuses it with a named reason in logcat rather than following it - the connector
+  link fails and nothing else does. Endpoints were checked against each provider's documentation on
+  2026-11-14; a provider that moves one fails closed, not open. An unrecognised connector (one Arena adds
+  later) is also refused until it is reviewed and added here.
+* **`platform.arena.ai` (the Arena API) is not allow-listed.** It is a separate, invite-only developer
+  product with its own Google sign-in. It remains reachable for sub-resources like any HTTPS host, but it
+  can never be a page, so its sign-in cannot be started inside the app.
+* **Three first-party hosts are asset-only.** `indexable.arena.ai` (pre-render object bucket, `404` at
+  its root), `blog.arena.ai` and `news.arena.ai` (both Cloudflare `522`, checked 2026-11-14) can serve
+  images and scripts but can never be the app's page. The live blog is `arena.ai/blog`.
 * **A rooted or otherwise compromised device** can bypass anything an app does; that is outside the
   model.
 * **A modified build** is outside the model too. That is exactly why the security-relevant invariants are

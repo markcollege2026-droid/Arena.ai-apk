@@ -192,12 +192,23 @@ public class ManifestPolicyTest {
                     allowedHosts.contains(host));
         }
 
-        // The first-party hosts must all be pinned explicitly (the app must never depend on the base
-        // config alone for the site it exists to show), and the sign-in page host must be there too.
-        for (String host : app.arenawebview.locked.policy.ArenaAllowlist.FIRST_PARTY_HOSTS) {
-            assertTrue("first-party host missing from the network config: " + host,
-                    configHosts.contains(host));
+        // Every page-capable host must be pinned explicitly (the app must never depend on the base
+        // config alone for a host it can display). The asset-only entries - the CAPTCHA widgets,
+        // Google's static hosts, and the demoted first-party hosts - are covered by the base config and
+        // are deliberately not pinned: pinning them would add trust anchors for no gain.
+        int pageCapable = 0;
+        for (app.arenawebview.locked.policy.AllowEntry entry
+                : app.arenawebview.locked.policy.ArenaAllowlist.activeEntries()) {
+            if (entry.isResourceOnly()) {
+                assertFalse("an asset-only host must not be pinned as a page: " + entry.host(),
+                        configHosts.contains(entry.host()));
+                continue;
+            }
+            pageCapable++;
+            assertTrue("page-capable host missing from the network config: " + entry.host(),
+                    configHosts.contains(entry.host()));
         }
+        assertTrue("the allow-list still has page-capable hosts", pageCapable > 0);
         assertTrue("the sign-in page host must be pinned in the network config",
                 configHosts.contains("accounts.google.com"));
     }

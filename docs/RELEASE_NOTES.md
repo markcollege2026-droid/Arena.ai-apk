@@ -1,3 +1,54 @@
+# Release notes - Arena WebView (Locked) 1.4.0
+
+Sixth build (`versionCode 6`, `versionName 1.4.0`). A re-audit of the live site and of every host this
+wrapper is attached to, replayed against the policy and the injected UI guard. Three things had drifted
+since 1.3.1, and one of them was a real bypass.
+
+## What is new in 1.4.0
+
+* **Agent Mode connectors are linkable inside the app, and nothing more.** Arena shipped *Connectors*
+  (27 Oct 2026) for GitHub, Google Drive, Google Docs/Sheets/Slides, Notion, Linear, Gmail, Supabase,
+  Vercel and Dropbox. Each provider is now a new `AllowEntry.Role.CONNECTOR`: page-capable **only at its
+  exact OAuth `authorize` path** - `github.com/login/oauth/authorize`,
+  `api.notion.com/v1/oauth/authorize`, `linear.app/oauth/authorize`,
+  `api.supabase.com/v1/oauth/authorize`, `vercel.com/oauth/authorize`,
+  `www.dropbox.com/oauth2/authorize` - plus that endpoint's own sign-in steps. Google's connectors reuse
+  the existing `accounts.google.com` sign-in entry. The connector window is policed on every hop by the
+  same `PopupRouterClient` that guards the Google hand-off, so it can never be steered into a
+  general-purpose browser.
+* **A prefix-pin bypass was found by executing the policy and closed.** Matching a connector path as a
+  *prefix* would have made `github.com/login/oauth/access_token` - the token endpoint, a sibling of the
+  authorize endpoint - a displayable page. Connector entries now match **exactly**
+  (`AllowEntry.isExactPaths()`), and
+  `connectorEntriesArePageCapableOnlyAtTheirAuthorizeEndpoint` pins that, including the siblings.
+* **Three first-party hosts demoted from pages to assets.** Checked 2026-11-14: `blog.arena.ai` and
+  `news.arena.ai` both answer Cloudflare `522` (origin down) and `arena.ai` no longer links to them - the
+  blog is served from `arena.ai/blog`; `indexable.arena.ai` is a pre-render object bucket whose root is a
+  `404`. All three stay reachable as images/scripts, but none can become the app's page, so the wrapper
+  can never present a dead host as the product. They are removed from
+  `network_security_config.xml`'s page list at the same time, and `ManifestPolicyTest` now asserts the
+  correspondence in both directions (page-capable hosts pinned, asset-only hosts not pinned).
+* **The sidebar promo guard matches the card that is actually live.** The current card reads
+  "Get More Done With Agents ... Try it now ... Hide this"; the guard now matches that wording and treats
+  a small card with a `Hide this` / `No thanks` control as dismissible, on top of the older
+  `"Try Agent Mode"` and YouTube promo shapes. A length bound (`< 300` characters) keeps a long container
+  that merely *contains* such a control from being hidden.
+* **New switches and pinned inventories:** `ArenaAllowlist.ENABLE_AGENT_CONNECTORS`,
+  `ArenaAllowlist.demotedFirstPartyHosts()` and `ArenaAllowlist.pageCapableThirdPartyHosts()` - the last
+  two are asserted exactly, so the page surface cannot change silently.
+
+## What was re-verified
+
+The site's own surfaces were re-read on 2026-11-14 and still match the wrapper: `arena.ai` (home,
+`/leaderboard`, `/blog`, `/agent`, `/code`, `/faq`, `/how-it-works`, `/careers`, `/company/about`,
+`/history/search` all load), `help.arena.ai` (Pylon), `status.arena.ai` (incident.io), `trust.arena.ai`
+(SafeBase). `platform.arena.ai` (the invite-only Arena API, launched since 1.3.1) is deliberately **not**
+allow-listed: it is a separate developer product with its own sign-in, and the wrapper stays on the
+arena.ai product surfaces. It remains reachable for sub-resources only, like any other HTTPS host, but it
+can never be a page.
+
+---
+
 # Release notes - Arena WebView (Locked) 1.3.1
 
 Fifth build (`versionCode 5`, `versionName 1.3.1`). It adds automatic removal of left-sidebar promotional

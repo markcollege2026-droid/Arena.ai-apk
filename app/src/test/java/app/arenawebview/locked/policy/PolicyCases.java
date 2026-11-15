@@ -65,7 +65,15 @@ public final class PolicyCases {
         both(cases, "cdn host", "https://cdn.arena.ai/_next/static/chunks/main.js", true, null);
         both(cases, "agent host", "https://agent.arena.ai/session/1", true, null);
         both(cases, "code host", "https://code.arena.ai/artifact/1", true, null);
-        both(cases, "blog host", "https://blog.arena.ai/post", true, null);
+        both(cases, "live blog on the main host", "https://arena.ai/blog/post", true, null);
+        // Retrieved 2026-11-14: the legacy blog/news hosts answer Cloudflare 522 and indexable. is an
+        // object bucket with no browsable root, so the three are assets only - never a page.
+        navBlockedSubAllowed(cases, "demoted legacy blog host", "https://blog.arena.ai/post",
+                BlockReason.DOCUMENT_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "demoted legacy news host", "https://news.arena.ai/post",
+                BlockReason.DOCUMENT_NOT_ALLOWED);
+        navBlockedSubAllowed(cases, "demoted pre-render bucket", "https://indexable.arena.ai/",
+                BlockReason.DOCUMENT_NOT_ALLOWED);
         both(cases, "help host", "https://help.arena.ai/article", true, null);
         both(cases, "status host", "https://status.arena.ai/", true, null);
         both(cases, "trust host", "https://trust.arena.ai/", true, null);

@@ -7,14 +7,36 @@ UI, and it does not touch Arena.ai's authentication, CAPTCHA or access rules.
 **Installable APK:** [Releases page](https://github.com/markcollege2026-droid/Arena.ai-apk/releases) -
 or download the `arena-webview-apk` artifact from the [Actions runs](https://github.com/markcollege2026-droid/Arena.ai-apk/actions).
 
-**Package:** `app.arenawebview.locked` · **versionName:** 1.3.1 · **minSdk:** 24 (Android 7.0) ·
+**Package:** `app.arenawebview.locked` · **versionName:** 1.4.0 · **minSdk:** 24 (Android 7.0) ·
 **targetSdk:** 35 · **permissions:** `INTERNET`, `ACCESS_NETWORK_STATE` only.
 
 > Read [SECURITY.md](SECURITY.md) for the threat model and an honest list of what a WebView wrapper
 > *cannot* police. Read [TEST_REPORT.md](TEST_REPORT.md) for what has actually been executed and
 > measured, and [docs/EVIDENCE.md](docs/EVIDENCE.md) for the raw CI output.
 
-**What is new in 1.3.1 / 1.3.0:**
+**What is new in 1.4.0 (site re-audit):**
+* **Agent Mode connectors can be linked inside the app.** Arena's *Connectors* (GitHub, Notion, Linear,
+  Supabase, Vercel, Dropbox; Google's own connectors use the existing sign-in host) open an OAuth window
+  from `arena.ai/agent`. Each provider is now a `Role.CONNECTOR` entry that is **page-capable only at its
+  exact OAuth `authorize` path** - `/login/oauth/authorize` on `github.com`, `/v1/oauth/authorize` on
+  `api.notion.com`, `/oauth/authorize` on `linear.app`, `/v1/oauth/authorize` on `api.supabase.com`,
+  `/oauth/authorize` on `vercel.com`, `/oauth2/authorize` on `www.dropbox.com` - plus that endpoint's own
+  sign-in steps. The rest of each provider (dashboards, repositories, files, mail, token endpoints) stays
+  unreachable, exactly as before. Switch: `ArenaAllowlist.ENABLE_AGENT_CONNECTORS`.
+* **Three stale first-party hosts are demoted to assets.** `blog.arena.ai` and `news.arena.ai` both
+  return Cloudflare `522` (origin down) and the site now serves the blog from `arena.ai/blog`;
+  `indexable.arena.ai` is a pre-render object bucket with no browsable root. They remain reachable for
+  images/scripts the page still references but can never become the app's page, so a dead host can never
+  be presented as the product.
+* **A stale-path bypass was found and closed.** Path pins on a connector entry are matched **exactly**, not
+  as prefixes: a prefix pin would have let `/login/oauth/access_token` sit beside the pinned
+  `/login/oauth/authorize` and become a displayable page. Caught by executing the policy, not by reading
+  it - see `connectorEntriesArePageCapableOnlyAtTheirAuthorizeEndpoint`.
+* **Sidebar promo guard covers the current card.** The live sidebar callout ("Get More Done With Agents
+  ... Hide this") is now matched by its own wording and by its `Hide this` dismiss affordance, not only by
+  the older `"Try Agent Mode"` / YouTube shapes.
+
+**What was new in 1.3.1 / 1.3.0:**
 * **Left-sidebar promo removal & small-screen scrollability (`1.3.1`):** Automatically dismisses and
   hides left-sidebar promotional/callout cards (such as `"Try Agent Mode"` banners and YouTube video
   promos) via a `MutationObserver` + scoped CSS injected in `ArenaWebViewClient`, while preserving
@@ -128,10 +150,13 @@ a refusal plus an in-app explanation, never in a load.
 
 ### What is allow-listed
 
-`arena.ai` and `www.arena.ai` are the product. The remaining first-party hosts are the ones Arena.ai
-operates for its own assets and links: `auth.`, `cdn.`, `agent.`, `code.`, `indexable.`, `blog.`,
-`news.`, `help.`, `status.` and `trust.arena.ai`. Mail, SSO (`okta.`), e-mail security (`mta-sts.`)
-and non-production preview hosts (`*.preview.arena.ai`) are deliberately **not** listed.
+`arena.ai` and `www.arena.ai` are the product. The other page-capable first-party hosts are the ones
+Arena.ai operates for its own assets and links: `auth.`, `cdn.`, `agent.`, `code.`, `help.`, `status.`
+and `trust.arena.ai`. Three hosts are **asset-only** (fetched, but never the app's page):
+`indexable.arena.ai` (pre-render object bucket, no browsable root), `blog.arena.ai` and `news.arena.ai`
+(both return Cloudflare `522` - checked 2026-11-14 - and the live blog is `arena.ai/blog`). Mail, SSO
+(`okta.`), e-mail security (`mta-sts.`) and non-production preview hosts (`*.preview.arena.ai`) are
+deliberately **not** listed at all.
 
 **Sign-in and CAPTCHA hosts (enabled in this build).** Arena.ai lets you create an account and sign in
 **with a Google account** ("Continue with Google"), and it sits behind Cloudflare, so a CAPTCHA can
@@ -155,6 +180,25 @@ flows tolerate:
   `www.recaptcha.net/recaptcha/`, `www.gstatic.com/recaptcha/` and `challenges.cloudflare.com` on
   `/turnstile/` and `/cdn-cgi/challenge-platform/` (the frame Cloudflare's own documentation shows the
   widget rendering in).
+
+**Agent Mode connector hosts (enabled in this build).** Linking a connector opens the provider's OAuth
+authorisation page in the same in-app window the Google sign-in uses. Each is pinned to the endpoint it
+actually redirects to, matched **exactly**:
+
+| Connector | Host | Reachable path(s) |
+| --- | --- | --- |
+| GitHub | `github.com` | `/login/oauth/authorize`, plus `/login` and `/session` (its own sign-in steps) |
+| Notion | `api.notion.com` | `/v1/oauth/authorize` |
+| Linear | `linear.app` | `/oauth/authorize`, plus `/login`, `/signin` |
+| Supabase | `api.supabase.com` | `/v1/oauth/authorize` |
+| Vercel | `vercel.com` | `/oauth/authorize`, plus `/login` |
+| Dropbox | `www.dropbox.com` | `/oauth2/authorize`, plus `/login` |
+
+That is the whole widening: six hosts, each displayable only at an OAuth authorize endpoint. Their token
+endpoints, dashboards, repositories, files and every other path are refused as pages, and
+`connectorEntriesArePageCapableOnlyAtTheirAuthorizeEndpoint` fails the build if that ever stops being
+true. Set `ArenaAllowlist.ENABLE_AGENT_CONNECTORS` to `false` to remove all six; linking a connector then
+ends in the app's usual "pop-up blocked" refusal.
 
 Gmail, Drive, Docs, Play, `googleapis.com`, other `googleusercontent.com` hosts, Google Search outside
 `/recaptcha/`, and every other third party remain unreachable **as pages or embedded frames (`DOCUMENT` /

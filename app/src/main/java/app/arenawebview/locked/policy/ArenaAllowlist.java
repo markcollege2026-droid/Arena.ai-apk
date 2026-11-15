@@ -53,7 +53,7 @@ public final class ArenaAllowlist {
     /** The only page the app ever opens on its own. */
     public static final String PRIMARY_URL = "https://arena.ai/";
 
-    /** Exact end-point of every redirect that the wrapper follows back into the app. */
+    /** Exact first-party host names, in policy order (page-capable and asset-only hosts alike). */
     public static final List<String> FIRST_PARTY_HOSTS;
 
     /**
@@ -77,6 +77,21 @@ public final class ArenaAllowlist {
      * {@code /recaptcha/}.</p>
      */
     public static final boolean ENABLE_CAPTCHA_WIDGETS = true;
+
+    /**
+     * Agent Mode connectors (GitHub, Notion, Linear, Supabase, Vercel, Dropbox, and Google's own
+     * connectors via the already-enabled sign-in host).
+     *
+     * <p>A connector is linked by an OAuth window opened from {@code arena.ai/agent}. That window has to
+     * display the provider's <em>authorisation</em> page - and nothing else. Each entry here is therefore
+     * a {@link AllowEntry.Role#CONNECTOR}: page-capable, but only at the exact path prefixes listed, which
+     * cover the provider's OAuth authorize endpoint and its own sign-in steps. A provider's dashboard,
+     * repositories, files, mail and every other path stay unreachable, exactly as before.</p>
+     *
+     * <p>Set to {@code false} to remove every connector host: linking a connector then ends in the app's
+     * usual "pop-up blocked" refusal, and nothing else about the wrapper changes.</p>
+     */
+    public static final boolean ENABLE_AGENT_CONNECTORS = true;
 
     static {
         List<String> hosts = new ArrayList<String>();
@@ -109,6 +124,9 @@ public final class ArenaAllowlist {
         if (ENABLE_CAPTCHA_WIDGETS) {
             groups.add(captchaEntries());
         }
+        if (ENABLE_AGENT_CONNECTORS) {
+            groups.add(connectorEntries());
+        }
         entries.addAll(merge(groups));
         return Collections.unmodifiableList(entries);
     }
@@ -126,9 +144,18 @@ public final class ArenaAllowlist {
         entries.add(AllowEntry.anyPath("cdn.arena.ai", "First-party static asset CDN."));
         entries.add(AllowEntry.anyPath("agent.arena.ai", "Agent Mode first-party endpoint."));
         entries.add(AllowEntry.anyPath("code.arena.ai", "Code/artifact first-party endpoint."));
-        entries.add(AllowEntry.anyPath("indexable.arena.ai", "Pre-rendered content used by the site."));
-        entries.add(AllowEntry.anyPath("blog.arena.ai", "First-party blog (linked from the site)."));
-        entries.add(AllowEntry.anyPath("news.arena.ai", "First-party news pages (linked from the site)."));
+        entries.add(AllowEntry.resourceOnly("indexable.arena.ai", Collections.<String>emptyList(),
+                "Pre-rendered content bucket: served to the page as assets/frames only. It has no "
+                        + "browsable root (the object bucket answers 404 at /), so it must never be the "
+                        + "app's visible page."));
+        // Retrieved 2026-11-14: blog.arena.ai and news.arena.ai both answer Cloudflare 522 (origin down)
+        // and arena.ai no longer links to them - the blog is served from arena.ai/blog. They stay
+        // resolvable for any image/asset the site still references from them, but neither can become the
+        // app's page, so a dead host can never be presented as the product.
+        entries.add(AllowEntry.resourceOnly("blog.arena.ai", Collections.<String>emptyList(),
+                "Legacy blog host (currently 522). Assets only - the live blog is arena.ai/blog."));
+        entries.add(AllowEntry.resourceOnly("news.arena.ai", Collections.<String>emptyList(),
+                "Legacy news host (currently 522, no longer linked from the site). Assets only."));
         entries.add(AllowEntry.anyPath("help.arena.ai", "First-party help centre (linked from the site)."));
         entries.add(AllowEntry.anyPath("status.arena.ai", "First-party status page (linked from the site)."));
         entries.add(AllowEntry.anyPath("trust.arena.ai", "First-party trust/compliance centre (linked from the site)."));
@@ -186,13 +213,81 @@ public final class ArenaAllowlist {
     }
 
     /**
-     * Every non-Arena host this build can reach, in policy order. Pinned by
-     * {@code AllowlistRegressionTest}: this list is the app's whole third-party surface.
+     * Agent Mode connector authorisation endpoints. Every entry is a {@code CONNECTOR}: page-capable,
+     * pinned to the provider's own OAuth {@code authorize} endpoint plus the sign-in steps that endpoint
+     * redirects through, and nothing wider.
+     *
+     * <p>These six are the non-Google providers in the connector row; Google's own connectors (Drive,
+     * Docs, Sheets, Slides, Gmail, Calendar) reuse {@code accounts.google.com} from
+     * {@link #signInEntries()}. The paths below were checked against each provider's documented OAuth
+     * endpoint on 2026-11-14; a provider that moved its endpoint would fail closed (the pop-up is
+     * refused with a named reason in logcat) rather than quietly widen.</p>
+     */
+    public static List<AllowEntry> connectorEntries() {
+        List<AllowEntry> entries = new ArrayList<AllowEntry>();
+        entries.add(AllowEntry.connectorSignIn("github.com", paths("/login/oauth/authorize", "/login", "/session"),
+                "GitHub connector: the OAuth authorize endpoint and its own sign-in steps. github.com "
+                        + "repositories, settings and every other path stay unreachable."));
+        entries.add(AllowEntry.connectorSignIn("api.notion.com", paths("/v1/oauth/authorize"),
+                "Notion connector: the OAuth authorize endpoint only."));
+        entries.add(AllowEntry.connectorSignIn("linear.app", paths("/oauth/authorize", "/login", "/signin"),
+                "Linear connector: the OAuth authorize endpoint and its own sign-in steps."));
+        entries.add(AllowEntry.connectorSignIn("api.supabase.com", paths("/v1/oauth/authorize"),
+                "Supabase connector: the OAuth authorize endpoint only."));
+        entries.add(AllowEntry.connectorSignIn("vercel.com", paths("/oauth/authorize", "/login"),
+                "Vercel connector: the OAuth authorize endpoint and its own login step."));
+        entries.add(AllowEntry.connectorSignIn("www.dropbox.com", paths("/oauth2/authorize", "/login"),
+                "Dropbox connector: the OAuth authorize endpoint and its own login step."));
+        return Collections.unmodifiableList(entries);
+    }
+
+    /**
+     * The first-party hosts that are <b>not</b> page-capable any more: they still serve assets, but the
+     * app is never navigated to them. Pinned by {@code AllowlistRegressionTest}.
+     */
+    public static List<String> demotedFirstPartyHosts() {
+        List<String> hosts = new ArrayList<String>();
+        for (AllowEntry entry : firstPartyEntries()) {
+            if (entry.isResourceOnly()) {
+                hosts.add(entry.host());
+            }
+        }
+        return Collections.unmodifiableList(hosts);
+    }
+
+    /**
+     * Every third-party host this build can reach (page-capable and asset-only alike), in policy order.
+     * This is the app's whole outbound third-party surface, and it is pinned by
+     * {@code AllowlistRegressionTest}.
      */
     public static List<String> thirdPartyHosts() {
         List<String> hosts = new ArrayList<String>();
         for (AllowEntry entry : activeEntries()) {
-            if (!entry.isProduct()) {
+            if (!entry.isProduct() && !isFirstParty(entry.host())) {
+                hosts.add(entry.host());
+            }
+        }
+        return Collections.unmodifiableList(hosts);
+    }
+
+    /** True when the host appears in the first-party list (page-capable or demoted). */
+    private static boolean isFirstParty(String host) {
+        for (AllowEntry entry : firstPartyEntries()) {
+            if (entry.host().equals(host)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The third-party hosts that may become a page, in policy order: Google's sign-in host and the
+     * connector authorisation endpoints.
+     */
+    public static List<String> pageCapableThirdPartyHosts() {
+        List<String> hosts = new ArrayList<String>();
+        for (AllowEntry entry : activeEntries()) {
+            if (!entry.isProduct() && entry.isPageCapable()) {
                 hosts.add(entry.host());
             }
         }
@@ -241,6 +336,11 @@ public final class ArenaAllowlist {
                 }
                 if (existing.role() != entry.role()) {
                     throw new IllegalStateException("Conflicting allow-list roles for " + entry.host());
+                }
+                if (existing.role() == AllowEntry.Role.CONNECTOR) {
+                    // Union-ing two connector path sets would widen a provider's reachable surface
+                    // silently. A connector must be declared exactly once; a duplicate is a bug.
+                    throw new IllegalStateException("Connector host declared twice: " + entry.host());
                 }
                 if (existing.pathPrefixes().isEmpty() || entry.pathPrefixes().isEmpty()) {
                     // One of the groups wants the whole host: keep it whole. Union-ing the prefixes here

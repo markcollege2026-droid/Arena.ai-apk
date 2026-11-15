@@ -296,6 +296,40 @@ public class SourceInvariantsTest {
     }
 
     /**
+     * A connector OAuth window may only be promoted for a host that the policy itself pins to an exact
+     * path.
+     *
+     * <p>The router asks one question ({@code isSignInNavigation}) for two kinds of page: Google's
+     * account flow and a connector's authorize endpoint. That is only safe because the policy answers
+     * "yes" for a connector host <em>solely</em> at its exact authorize path - so this test pins the
+     * mechanism, not just the intent: every connector entry must be exact-path restricted, and the
+     * router must not contain a second, independent decision about which hosts are allowed.</p>
+     */
+    @Test
+    public void connectorWindowsArePromotedOnlyForExactPathPinnedHosts() throws Exception {
+        // Every connector entry is exact-path pinned, so the page surface it opens is one endpoint.
+        int connectors = 0;
+        for (app.arenawebview.locked.policy.AllowEntry entry
+                : app.arenawebview.locked.policy.ArenaAllowlist.activeEntries()) {
+            if (!entry.isConnector()) {
+                continue;
+            }
+            connectors++;
+            assertTrue("connector must be path-pinned: " + entry.host(), entry.isPathRestricted());
+            assertTrue("connector paths must be exact, not prefixes: " + entry.host(),
+                    entry.isExactPaths());
+        }
+        assertTrue("this build has connectors enabled", connectors >= 6);
+
+        // The router has exactly one promotion decision, and it is the policy's.
+        String router = code("app/arenawebview/locked/web/PopupRouterClient.java");
+        assertTrue(router.contains("isSignInNavigation(url)"));
+        assertFalse("the router must not hard-code a provider host", router.contains("github.com"));
+        assertFalse("the router must not hard-code a provider host", router.contains("notion"));
+        assertFalse("the router must not hard-code a provider host", router.contains("dropbox"));
+    }
+
+    /**
      * Enabling Google sign-in must not have opened a way out of the app: no system browser, no Custom
      * Tab, no ACTION_VIEW, and the in-app window is a plain child view.
      */
