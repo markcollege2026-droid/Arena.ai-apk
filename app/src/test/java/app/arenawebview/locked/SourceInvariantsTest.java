@@ -296,6 +296,59 @@ public class SourceInvariantsTest {
     }
 
     /**
+     * A connector OAuth window may only be promoted for a host that the policy itself pins to an exact
+     * path.
+     *
+     * <p>The router asks one question ({@code isSignInNavigation}) for two kinds of page: Google's
+     * account flow and a connector's authorize endpoint. That is only safe because the policy answers
+     * "yes" for a connector host <em>solely</em> at its exact authorize path - so this test pins the
+     * mechanism, not just the intent: every connector entry must be exact-path restricted, and the
+     * router must not contain a second, independent decision about which hosts are allowed.</p>
+     */
+    @Test
+    public void connectorWindowsArePromotedOnlyForExactPathPinnedHosts() throws Exception {
+        // Every connector entry is exact-path pinned, so the page surface it opens is one endpoint.
+        int connectors = 0;
+        for (app.arenawebview.locked.policy.AllowEntry entry
+                : app.arenawebview.locked.policy.ArenaAllowlist.activeEntries()) {
+            if (!entry.isConnector()) {
+                continue;
+            }
+            connectors++;
+            assertTrue("connector must be path-pinned: " + entry.host(), entry.isPathRestricted());
+            assertTrue("connector paths must be exact, not prefixes: " + entry.host(),
+                    entry.isExactPaths());
+        }
+        assertTrue("this build has connectors enabled", connectors >= 4);
+
+        // The router has exactly one promotion decision, and it is the policy's.
+        String router = code("app/arenawebview/locked/web/PopupRouterClient.java");
+        assertTrue(router.contains("isSignInNavigation(url)"));
+        assertFalse("the router must not hard-code a provider host", router.contains("github.com"));
+        assertFalse("the router must not hard-code a provider host", router.contains("notion"));
+        assertFalse("the router must not hard-code a provider host", router.contains("dropbox"));
+
+        // The window must survive Arena's own staging page ("you will be sent to X to sign in"), which
+        // is an Arena.ai page and not a sign-in URL. Gating the first hop on isSignInNavigation alone
+        // destroyed the window before the provider was ever reached, which severed window.opener and
+        // broke every connector - see the diagnosis in RELEASE_NOTES.md.
+        assertTrue("the first hop may be an Arena.ai staging page",
+                router.contains("isProductNavigation(url)"));
+
+        // ...but only for a window the connector flow opened. Every other pop-up must keep the original
+        // guarantee that an allowed Arena.ai target is folded into the single visible WebView, which is
+        // what stops a target="_blank" link from leaving a second window on screen.
+        assertTrue("the staging-page exception must be gated on the opener",
+                router.contains("startsInConnectorFlow()"));
+        // A promoted window must keep the return hop to Arena.ai's callback: that page reads the OAuth
+        // result, and moving it into the main view would throw the result away.
+        assertTrue("the promoted window must keep the return hop",
+                router.contains("promotedToSignInWindow && sitePage"));
+        assertTrue("the exception must require a connector-flow window", router.contains("flowConnector"));
+        assertTrue("the exception must be limited to the Agent page", router.contains("\"/agent\""));
+    }
+
+    /**
      * Enabling Google sign-in must not have opened a way out of the app: no system browser, no Custom
      * Tab, no ACTION_VIEW, and the in-app window is a plain child view.
      */

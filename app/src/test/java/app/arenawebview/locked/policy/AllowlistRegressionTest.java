@@ -75,7 +75,14 @@ public class AllowlistRegressionTest {
                         "lh3.googleusercontent.com",
                         "www.google.com",
                         "www.recaptcha.net",
-                        "challenges.cloudflare.com"),
+                        "challenges.cloudflare.com",
+                        // Agent Mode connectors: authorize endpoint only (see connectorEntries()).
+                        // Notion and Supabase are deliberately absent - their sign-in lands off the
+                        // authorize host, so they are refused rather than half-supported.
+                        "github.com",
+                        "linear.app",
+                        "vercel.com",
+                        "www.dropbox.com"),
                 ArenaAllowlist.thirdPartyHosts());
     }
 
@@ -87,9 +94,10 @@ public class AllowlistRegressionTest {
     }
 
     @Test
-    public void exactlyOneThirdPartyHostMayEverBecomeAPage() {
+    public void onlyTheReviewedThirdPartyHostsMayEverBecomeAPage() {
         PolicyConfig config = ArenaAllowlist.productionConfig();
-        List<String> documentCapableThirdParties = Arrays.asList("accounts.google.com");
+        List<String> documentCapableThirdParties = Arrays.asList("accounts.google.com",
+                "github.com", "linear.app", "vercel.com", "www.dropbox.com");
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
             if (entry.isProduct()) {
                 continue;
@@ -97,8 +105,13 @@ public class AllowlistRegressionTest {
             boolean documentCapable = !entry.isResourceOnly();
             assertEquals("unexpected document-capable third party: " + entry.host(),
                     documentCapable, documentCapableThirdParties.contains(entry.host()));
+            if ("accounts.google.com".equals(entry.host())) {
+                assertEquals("the Google sign-in host keeps its unpinned sign-in role",
+                        AllowEntry.Role.SIGN_IN, entry.role());
+                continue;
+            }
             assertEquals("unexpected role for " + entry.host(),
-                    documentCapable ? AllowEntry.Role.SIGN_IN : AllowEntry.Role.ASSET, entry.role());
+                    documentCapable ? AllowEntry.Role.CONNECTOR : AllowEntry.Role.ASSET, entry.role());
         }
         // ... and the sign-in host is the one the flow actually uses.
         assertTrue(ArenaAllowlist.isSignInHost("accounts.google.com"));
@@ -114,7 +127,9 @@ public class AllowlistRegressionTest {
     public void everyThirdPartyAssetEntryIsResourceOnlyAndReviewableAtItsPathScope() {
         // Everything third-party is asset-only: none of these hosts can ever be the app's page.
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
-            if (entry.isProduct() || entry.isSignIn()) {
+            // Product, Google sign-in and connector-authorize entries are the reviewed page-capable
+            // classes; every other third-party entry must be asset-only.
+            if (entry.isProduct() || entry.isSignIn() || entry.isConnector()) {
                 continue;
             }
             assertTrue("third-party entry must be resource only (never a page): " + entry.host(),
@@ -128,9 +143,14 @@ public class AllowlistRegressionTest {
         // exceptions for one reason: Google serves its identity UI from content-hashed paths that change
         // with every deployment, so any prefix list would break sign-in again (it did once - see
         // TEST_REPORT.md). Widening this set must be a deliberate edit here as well.
-        List<String> deliberatelyUnrestricted = Arrays.asList("ssl.gstatic.com", "www.gstatic.com");
+        List<String> deliberatelyUnrestricted = Arrays.asList("ssl.gstatic.com", "www.gstatic.com",
+                // First-party asset-only entries: Google's two hosts are unrestricted for the reason
+                // above; these three are demoted page hosts whose paths are not the point (they are
+                // never navigable at all).
+                "indexable.arena.ai", "blog.arena.ai", "news.arena.ai");
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
-            if (entry.isProduct() || entry.isSignIn() || entry.isPathRestricted()) {
+            if (entry.isProduct() || entry.isSignIn() || entry.isConnector()
+                    || entry.isPathRestricted()) {
                 continue;
             }
             {
@@ -142,7 +162,7 @@ public class AllowlistRegressionTest {
         }
         for (String host : deliberatelyUnrestricted) {
             assertTrue("the reviewed exception list must match reality: " + host,
-                    ArenaAllowlist.thirdPartyHosts().contains(host));
+                    ArenaAllowlist.allowedHosts().contains(host));
         }
     }
 
@@ -182,6 +202,157 @@ public class AllowlistRegressionTest {
         assertTrue("an unrestricted group must not be narrowed by a restricted one",
                 widened.get(0).pathPrefixes().isEmpty());
         assertEquals("and the host must not be duplicated", 1, widened.size());
+    }
+
+    /**
+     * Notion and Supabase are refused outright, not half-supported.
+     *
+     * <p>Their authorize endpoints sit on {@code api.notion.com} / {@code api.supabase.com}, but a
+     * signed-out user is redirected to {@code www.notion.so/login} and
+     * {@code supabase.com/dashboard/sign-in} - and the WebView's cookie jar always starts signed out.
+     * Allow-listing only the authorize endpoint would leave a flow that dies at its first hop, and
+     * allow-listing those page hosts would put two dashboards inside the wrapper. Both endpoints are
+     * therefore absent, and this test states that as the intended behaviour rather than an oversight:
+     * if anyone re-adds them, this fails and forces the trade-off to be made explicitly.</p>
+     */
+    @Test
+    public void notionAndSupabaseAreRefusedRatherThanHalfSupported() {
+        PolicyConfig config = ArenaAllowlist.productionConfig();
+        String[] refused = {
+                "https://api.notion.com/v1/oauth/authorize?client_id=x&owner=user",
+                "https://api.supabase.com/v1/oauth/authorize?client_id=x",
+                "https://www.notion.so/login?redirect_uri=https%3A%2F%2Fapi.notion.com%2Fv1%2Foauth%2Fauthorize",
+                "https://supabase.com/dashboard/sign-in?returnTo=%2Fv1%2Foauth%2Fauthorize",
+                "https://notion.so/",
+                "https://supabase.com/",
+        };
+        for (String url : refused) {
+            assertFalse("a half-supported connector must be refused outright: " + url,
+                    config.evaluateNavigation(url).isAllowed());
+        }
+        for (String host : new String[]{"api.notion.com", "api.supabase.com", "www.notion.so",
+                "notion.so", "supabase.com", "www.supabase.com"}) {
+            assertFalse("host must not be on the allow-list: " + host,
+                    ArenaAllowlist.allowedHosts().contains(host));
+        }
+        assertFalse("Notion must not be counted as a page-capable third party",
+                ArenaAllowlist.pageCapableThirdPartyHosts().contains("api.notion.com"));
+        assertFalse("Supabase must not be counted as a page-capable third party",
+                ArenaAllowlist.pageCapableThirdPartyHosts().contains("api.supabase.com"));
+    }
+
+    /**
+     * A connector entry is page-capable, so its path pin is the only thing standing between "the
+     * provider's OAuth authorize endpoint" and "the provider's whole site". These assertions are the
+     * guard for that: every connector entry is path-restricted, and the provider's ordinary pages are
+     * refused.
+     */
+    @Test
+    public void connectorEntriesArePageCapableOnlyAtTheirAuthorizeEndpoint() {
+        PolicyConfig config = ArenaAllowlist.productionConfig();
+        assertTrue("connectors are enabled in this build", ArenaAllowlist.ENABLE_AGENT_CONNECTORS);
+
+        // The documented authorize endpoint of every connector is reachable as a page...
+        String[][] authorizeUrls = {
+                {"github.com", "https://github.com/login/oauth/authorize?client_id=x&state=y"},
+                {"linear.app", "https://linear.app/oauth/authorize?client_id=x&response_type=code"},
+                {"vercel.com", "https://vercel.com/oauth/authorize?client_id=x"},
+                {"www.dropbox.com", "https://www.dropbox.com/oauth2/authorize?client_id=x"},
+        };
+        for (String[] row : authorizeUrls) {
+            AllowEntry entry = null;
+            for (AllowEntry candidate : ArenaAllowlist.activeEntries()) {
+                if (candidate.host().equals(row[0])) {
+                    entry = candidate;
+                }
+            }
+            assertNotNull("connector host must be allow-listed: " + row[0], entry);
+            assertTrue("a connector entry must be path-pinned: " + row[0], entry.isPathRestricted());
+            assertTrue("connector role: " + row[0], entry.isConnector());
+            assertTrue("authorize endpoint must be a page: " + row[1],
+                    config.evaluateNavigation(row[1]).isAllowed());
+            assertTrue("authorize endpoint counts as a sign-in step: " + row[1],
+                    config.isSignInNavigation(row[1]));
+        }
+
+        // ...and the provider's ordinary pages are not: dashboards, repositories, APIs, token endpoints.
+        String[] refusedPages = {
+                "https://github.com/settings/tokens",
+                "https://github.com/torvalds/linux",
+                "https://github.com/login/oauth/access_token",
+                "https://www.notion.so/my-integrations",
+                "https://api.notion.com/v1/users",
+                "https://linear.app/settings",
+                "https://supabase.com/dashboard",
+                "https://api.supabase.com/v1/projects",
+                "https://vercel.com/dashboard",
+                "https://www.dropbox.com/home",
+                "https://www.dropbox.com/oauth2/token",
+        };
+        for (String url : refusedPages) {
+            assertFalse("must not be a page: " + url, config.evaluateNavigation(url).isAllowed());
+            assertFalse("must not be a sign-in step: " + url, config.isSignInNavigation(url));
+        }
+
+        // The authorize path is pinned exactly, not as a prefix: GitHub serves its token endpoint as a
+        // sibling of the authorize endpoint, and a prefix pin would have made that a displayable page.
+        // (Caught by running the policy, not by reading it.)
+        for (String sibling : new String[]{
+                "https://github.com/login/oauth/access_token",
+                "https://github.com/login/oauth/authorize/../access_token",
+                "https://api.notion.com/v1/oauth/token",
+                "https://api.supabase.com/v1/oauth/token"}) {
+            assertFalse("a sibling of the authorize endpoint must not be a page: " + sibling,
+                    config.evaluateNavigation(sibling).isAllowed());
+        }
+
+        // A connector page is never an Arena.ai product page, so it can never be treated as one by the
+        // sidebar guard or by the "is the user still on the site?" checks.
+        assertFalse(config.isProductNavigation("https://github.com/login/oauth/authorize?client_id=x"));
+        assertFalse(config.isProductNavigation("https://api.notion.com/v1/oauth/authorize?client_id=x"));
+    }
+
+    /**
+     * The three first-party hosts that are no longer browsable (checked 2026-11-14) stay reachable as
+     * <em>assets</em> only.
+     *
+     * <p>{@code blog.} and {@code news.arena.ai} answer Cloudflare 522 and the site now serves the blog
+     * from {@code arena.ai/blog}; {@code indexable.arena.ai} is an object bucket with no browsable root.
+     * Presenting any of them as the app's page would show a dead or meaningless screen, so they are
+     * demoted rather than removed: whatever the site still references still loads, and the page surface
+     * only ever contains live product hosts.</p>
+     */
+    @Test
+    public void demotedFirstPartyHostsAreAssetsOnly() {
+        PolicyConfig config = ArenaAllowlist.productionConfig();
+        String[] demoted = {"indexable.arena.ai", "blog.arena.ai", "news.arena.ai"};
+        for (String host : demoted) {
+            assertTrue("still allow-listed for assets: " + host,
+                    ArenaAllowlist.FIRST_PARTY_HOSTS.contains(host));
+            assertFalse("must never become the app's page: " + host,
+                    config.evaluateNavigation("https://" + host + "/").isAllowed());
+            // Asset-only hosts deliberately stay embeddable - that is the same rule that lets a CAPTCHA
+            // widget render in an iframe - so the guarantee is "never the app's own page", not "never a
+            // frame".
+            assertTrue("asset semantics: still embeddable: " + host,
+                    config.evaluateSubdocument("https://" + host + "/").isAllowed());
+            assertTrue("assets must still load: " + host,
+                    config.evaluateRequest("https://" + host + "/x.png").isAllowed());
+        }
+        assertEquals("the demoted first-party hosts, pinned",
+                Arrays.asList("indexable.arena.ai", "blog.arena.ai", "news.arena.ai"),
+                ArenaAllowlist.demotedFirstPartyHosts());
+        assertEquals("page-capable third parties, pinned",
+                Arrays.asList("accounts.google.com", "github.com", "linear.app", "vercel.com",
+                        "www.dropbox.com"),
+                ArenaAllowlist.pageCapableThirdPartyHosts());
+
+        // The live blog, help, status and trust centres remain pages.
+        for (String url : new String[]{"https://arena.ai/blog/connectors-in-agent-mode",
+                "https://help.arena.ai/articles/6934758149-connect-your-apps-to-arena",
+                "https://status.arena.ai/", "https://trust.arena.ai/"}) {
+            assertTrue("must still be a page: " + url, config.evaluateNavigation(url).isAllowed());
+        }
     }
 
     @Test

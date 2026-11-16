@@ -1,3 +1,90 @@
+# Release notes - Arena WebView (Locked) 1.4.0
+
+Sixth build (`versionCode 6`, `versionName` 1.4.0). Two things happened here: a re-audit of the live
+site, and a real bug fix for Agent Mode connectors, which did not work at all in the first cut of this
+release.
+
+## 1.4.0 - why connectors were broken, and what fixed it
+
+The first version of connector support was wrong in a way that only showed up on a device. Every
+provider failed with a blocked-message from the wrapper *and* an error from the site. Those were two
+symptoms of one bug.
+
+**The flow Arena actually uses.** Pressing *Connect* does not navigate to the provider. Arena opens a
+pop-up on **its own page** - the "you will be sent to X to sign in" screen - and only then redirects to
+the provider's OAuth endpoint.
+
+**The bug.** `PopupRouterClient` promoted a pop-up to a visible window only when the very first URL was
+a sign-in URL:
+
+```java
+if (promotedToSignInWindow ? (signInStep || sitePage) : signInStep) {
+```
+
+An Arena.ai page is allowed by the policy but is *not* a sign-in URL, so that first hop fell through to
+the ordinary-pop-up branch: the URL was handed to the single visible WebView and the new window was
+destroyed. Two consequences, both of which the user sees at once:
+
+* the OAuth flow could never start, and the next hop (the provider) was then evaluated in the main
+  view, where it is correctly refused as an off-policy navigation; and
+* destroying the window severed `window.opener`, so the site's own `postMessage` callback never fired
+  and Arena reported its own failure.
+
+**The fix.** An Arena.ai page is now accepted on the first hop as well, so the window stays open for the
+whole hand-off. The cost is deliberate and bounded: a pop-up that lands on an Arena.ai page is shown in
+that guarded window instead of replacing the page, so a `target="_blank"` link now opens an in-app
+window. It is the same policy-checked WebView, it is destroyed when the page closes, and it can only
+display Arena.ai pages and the pinned sign-in endpoints. A new `isHandOffComplete()` also closes the
+window if the site returns it to the bare Arena.ai root without calling `window.close()` itself -
+callback URLs are deliberately excluded, because that page is what reads the result.
+
+**Notion and Supabase are now unsupported, on purpose.** Both authorize endpoints were allow-listed in
+the first cut, and both are unreachable in practice: a signed-out user is redirected off the authorize
+host to `www.notion.so/login` and `supabase.com/dashboard/sign-in`. The WebView has its own cookie jar
+and is always signed out, so allowing only the authorize endpoint leaves a flow that dies at the first
+hop - and allowing those two page hosts would put both dashboards inside the wrapper. Neither is
+acceptable, so both providers are refused outright: Connect fails immediately and visibly.
+`notionAndSupabaseAreRefusedRatherThanHalfSupported` pins that decision. The four supported connectors
+(GitHub, Linear, Vercel, Dropbox) keep their entire sign-in flow on the host that serves their authorize
+endpoint, which is already pinned.
+
+## What is new in 1.4.0
+
+* **Agent Mode connectors work** for GitHub, Linear, Vercel and Dropbox. Each is a `Role.CONNECTOR`
+  entry, page-capable **only at its exact OAuth `authorize` path** plus that endpoint's own sign-in
+  steps. Switch: `ArenaAllowlist.ENABLE_AGENT_CONNECTORS`.
+* **A prefix-pin bypass was found by executing the policy and closed.** Matching a connector path as a
+  *prefix* would have made `github.com/login/oauth/access_token` - the token endpoint, a sibling of the
+  authorize endpoint - a displayable page. Connector entries now match **exactly**
+  (`AllowEntry.isExactPaths()`), and
+  `connectorEntriesArePageCapableOnlyAtTheirAuthorizeEndpoint` pins that, including the siblings.
+* **Three first-party hosts demoted from pages to assets.** Checked 2026-11-14: `blog.arena.ai` and
+  `news.arena.ai` both answer Cloudflare `522` (origin down) and `arena.ai` no longer links to them - the
+  blog is served from `arena.ai/blog`; `indexable.arena.ai` is a pre-render object bucket whose root is a
+  `404`. All three stay reachable as images/scripts/frames, but none can become the app's page, so the
+  wrapper can never present a dead host as the product. They are removed from
+  `network_security_config.xml`'s page list at the same time, and `ManifestPolicyTest` now asserts the
+  correspondence in both directions (page-capable hosts pinned, asset-only hosts not pinned).
+* **The sidebar promo guard matches the card that is actually live.** The current card reads
+  "Get More Done With Agents ... Try it now ... Hide this"; the guard now matches that wording and treats
+  a small card with a `Hide this` / `No thanks` control as dismissible, on top of the older
+  `"Try Agent Mode"` and YouTube promo shapes. A length bound (`< 300` characters) keeps a long container
+  that merely *contains* such a control from being hidden.
+* **New switches and pinned inventories:** `ArenaAllowlist.ENABLE_AGENT_CONNECTORS`,
+  `ArenaAllowlist.demotedFirstPartyHosts()` and `ArenaAllowlist.pageCapableThirdPartyHosts()` - the last
+  two are asserted exactly, so the page surface cannot change silently.
+
+## What was re-verified
+
+The site's own surfaces were re-read on 2026-11-14 and still match the wrapper: `arena.ai` (home,
+`/leaderboard`, `/blog`, `/agent`, `/code`, `/faq`, `/how-it-works`, `/careers`, `/company/about`,
+`/history/search` all load), `help.arena.ai` (Pylon), `status.arena.ai` (incident.io), `trust.arena.ai`
+(SafeBase). `platform.arena.ai` (the invite-only Arena API, launched since 1.3.1) is deliberately **not**
+allow-listed: it is a separate developer product with its own sign-in, and the wrapper stays on the
+arena.ai product surfaces. It remains reachable for sub-resources only.
+
+---
+
 # Release notes - Arena WebView (Locked) 1.3.1
 
 Fifth build (`versionCode 5`, `versionName 1.3.1`). It adds automatic removal of left-sidebar promotional

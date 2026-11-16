@@ -28,7 +28,8 @@ is Google's server-side policy and this app does not work around it (README §3,
 | Component | Trusted? | Notes |
 | --- | --- | --- |
 | `arena.ai` and the first-party hosts in the allow-list | yes, as the site the user asked for | TLS with system trust anchors only |
-| `accounts.google.com` (sign-in pages) and the Google/Cloudflare widget hosts (assets only) | as much as any third party is ever trusted | reachable only as far as the two capability switches allow; the only third-party *page* is Google's account host, and only inside the in-app sign-in window |
+| `accounts.google.com` (sign-in pages) and the Google/Cloudflare widget hosts (assets only) | as much as any third party is ever trusted | reachable only as far as the two capability switches allow; Google's account host is the only *unpinned* third-party page, and only inside the in-app sign-in window |
+| The four Agent Mode connector hosts (`github.com`, `linear.app`, `vercel.com`, `www.dropbox.com`) | as much as any third party is ever trusted | each is a `Role.CONNECTOR` entry pinned to its **exact** OAuth `authorize` path (plus that endpoint's own sign-in steps); the provider's dashboard, repositories, files and token endpoint are refused as pages. `ENABLE_AGENT_CONNECTORS=false` removes all four. Notion and Supabase are not supported at all - see the note below |
 | Android WebView (Chromium) | yes | kept up to date by the Play Store, not bundled by this app; Safe Browsing enabled |
 | The user's network | no | HTTPS only, no user CAs trusted, no cleartext fallback |
 | Everything else on the network | no | unreachable by policy; requests are refused before they are sent |
@@ -122,6 +123,34 @@ is Google's server-side policy and this app does not work around it (README §3,
   does not use HTTP/3 (QUIC cannot traverse a `CONNECT` tunnel; HTTP/1.1 and HTTP/2 are unaffected),
   and a device-wide HTTP proxy, if one is configured, is chained through by the guard rather than
   bypassed.
+* **Notion and Supabase cannot be connected in this app, by design.** Their OAuth authorize endpoints are
+  on `api.notion.com` / `api.supabase.com`, but a signed-out user is immediately redirected to
+  `www.notion.so/login` or `supabase.com/dashboard/sign-in`. The WebView keeps its own cookie jar and is
+  therefore always signed out, so allowing only the authorize endpoint would produce a flow that dies at
+  its first hop, while allowing those two page hosts would make both dashboards displayable inside the
+  wrapper. Neither trade-off is acceptable, so both providers are refused: pressing Connect fails at
+  once with a named reason rather than appearing to work. This is asserted by
+  `notionAndSupabaseAreRefusedRatherThanHalfSupported` so the decision cannot be undone by accident.
+* **Connecting a connector spends one extra in-app window.** Arena opens an OAuth flow by loading its own
+  page in a new window before redirecting to the provider, and that window must stay alive for
+  `window.opener`/`postMessage` to return the result. An Arena.ai page in a pop-up is therefore shown in
+  that guarded window instead of being folded into the main view - so a `target="_blank"` link opens an
+  in-app window rather than replacing the page. It is the same policy-checked WebView, it is destroyed as
+  soon as the page closes, and it can only ever display Arena.ai pages and the pinned sign-in endpoints.
+* **Connectors are only as reachable as their authorize endpoint.** Linking an Agent Mode connector
+  inside the wrapper works up to the provider's authorize page; the flow then returns to Arena.ai
+  through the window's own `window.opener`, which is what the site expects. If a provider's page insists
+  on a full tab, a pop-up-of-a-pop-up, or a path outside the pinned set (a moved endpoint, a regional
+  variant), the app refuses it with a named reason in logcat rather than following it - the connector
+  link fails and nothing else does. Endpoints were checked against each provider's documentation on
+  2026-11-14; a provider that moves one fails closed, not open. An unrecognised connector (one Arena adds
+  later) is also refused until it is reviewed and added here.
+* **`platform.arena.ai` (the Arena API) is not allow-listed.** It is a separate, invite-only developer
+  product with its own Google sign-in. It remains reachable for sub-resources like any HTTPS host, but it
+  can never be a page, so its sign-in cannot be started inside the app.
+* **Three first-party hosts are asset-only.** `indexable.arena.ai` (pre-render object bucket, `404` at
+  its root), `blog.arena.ai` and `news.arena.ai` (both Cloudflare `522`, checked 2026-11-14) can serve
+  images and scripts but can never be the app's page. The live blog is `arena.ai/blog`.
 * **A rooted or otherwise compromised device** can bypass anything an app does; that is outside the
   model.
 * **A modified build** is outside the model too. That is exactly why the security-relevant invariants are

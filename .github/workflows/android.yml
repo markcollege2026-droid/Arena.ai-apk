@@ -57,6 +57,41 @@ jobs:
       - name: Run unit tests
         run: ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace
 
+      # Surface the failing assertion in the GitHub UI. Test reports and artifacts live in storage this
+      # repository's tooling cannot always reach, but check-run annotations are always readable - so when
+      # a test fails, emit its name and message as an annotation instead of burying it in the log.
+      - name: Summarise test failures as annotations
+        if: always()
+        run: |
+          set -o pipefail
+          shopt -s nullglob
+          results=(app/build/test-results/testDebugUnitTest/*.xml)
+          if [ ${#results[@]} -eq 0 ]; then
+            echo "::error title=Compilation failed::no unit-test results were produced - the test sources did not compile"
+            exit 0
+          fi
+          python3 - "${results[@]}" <<'PYEOF'
+          import sys, xml.etree.ElementTree as ET
+          failures = 0
+          for path in sys.argv[1:]:
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception as exc:
+                  print(f"::warning::could not parse {path}: {exc}")
+                  continue
+              for case in root.iter("testcase"):
+                  for kind in ("failure", "error"):
+                      node = case.find(kind)
+                      if node is None:
+                          continue
+                      failures += 1
+                      name = f"{case.get('classname')}.{case.get('name')}"
+                      message = (node.get("message") or node.text or "").strip()
+                      message = " ".join(message.split())
+                      print(f"::error title=FAILED {name}::{message[:900]}")
+          print(f"{failures} failing test(s)")
+          PYEOF
+
       - name: Publish unit test results
         if: always()
         uses: actions/upload-artifact@v4
