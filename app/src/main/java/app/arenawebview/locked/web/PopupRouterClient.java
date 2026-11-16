@@ -42,10 +42,29 @@ public final class PopupRouterClient extends ArenaWebViewClient {
     private volatile boolean closed;
     private boolean promotedToSignInWindow;
 
+    /**
+     * The page that opened this window, captured at creation time. It decides whether a first hop to an
+     * Arena.ai page is allowed to stay in this window or must be folded into the main view.
+     */
+    private final String openerUrl;
+    private final boolean flowConnector;
+
     public PopupRouterClient(GuardHost host, WebView popup, Runnable onClosed) {
+        this(host, popup, onClosed, null, false);
+    }
+
+    /**
+     * @param openerUrl     the URL of the page that opened the window, or null when unknown
+     * @param flowConnector true when the opener is Arena's Agent page, i.e. the only place a connector
+     *                      hand-off can start
+     */
+    public PopupRouterClient(GuardHost host, WebView popup, Runnable onClosed, String openerUrl,
+                             boolean flowConnector) {
         super(host);
         this.popup = popup;
         this.onClosed = onClosed;
+        this.openerUrl = openerUrl;
+        this.flowConnector = flowConnector;
     }
 
     @Override
@@ -131,7 +150,13 @@ public final class PopupRouterClient extends ArenaWebViewClient {
         // beyond Arena.ai and the pinned sign-in endpoints.
         boolean signInStep = host.policy().isSignInNavigation(url);
         boolean sitePage = host.policy().isProductNavigation(url);
-        if (signInStep || sitePage) {
+        // An Arena.ai page may keep this window only when the window came from the connector hand-off.
+        // Arena opens a connector by loading its own staging page here first ("you will be sent to X to
+        // sign in"), so that page has to be displayable or the flow dies before it starts. Every other
+        // pop-up keeps the original guarantee: an allowed Arena.ai target is folded into the single
+        // visible WebView and this window is discarded.
+        boolean stagingHop = sitePage && flowConnector && startsInConnectorFlow();
+        if (signInStep || stagingHop) {
             // The sign-in / connector hand-off. The window has to stay alive because the provider's page
             // returns its result to the page that opened it through window.opener/postMessage - a flow
             // that only works if the window it opened still exists.
@@ -214,6 +239,21 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             return false;
         }
         return query.isEmpty();
+    }
+
+    /**
+     * True when this window was opened from Arena's Agent page - the only page that can start a
+     * connector hand-off.
+     *
+     * <p>Deliberately narrow: an unknown opener (a plain {@code window.open()} whose opener we could not
+     * read) is treated as "not a connector flow", so the conservative fold-into-the-main-view behaviour
+     * stays the default.</p>
+     */
+    private boolean startsInConnectorFlow() {
+        if (!flowConnector) {
+            return false;
+        }
+        return openerUrl != null && openerUrl.contains("/agent");
     }
 
     /** about:blank, data: and blob: are the inert bootstrap locations of a brand new window. */

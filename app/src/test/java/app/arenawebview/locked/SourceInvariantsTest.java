@@ -334,6 +334,14 @@ public class SourceInvariantsTest {
         // broke every connector - see the diagnosis in RELEASE_NOTES.md.
         assertTrue("the first hop may be an Arena.ai staging page",
                 router.contains("isProductNavigation(url)"));
+
+        // ...but only for a window the connector flow opened. Every other pop-up must keep the original
+        // guarantee that an allowed Arena.ai target is folded into the single visible WebView, which is
+        // what stops a target="_blank" link from leaving a second window on screen.
+        assertTrue("the staging-page exception must be gated on the opener",
+                router.contains("startsInConnectorFlow()"));
+        assertTrue("the exception must require a connector-flow window", router.contains("flowConnector"));
+        assertTrue("the exception must be limited to the Agent page", router.contains("\"/agent\""));
     }
 
     /**
