@@ -217,23 +217,31 @@ public final class ArenaAllowlist {
      * pinned to the provider's own OAuth {@code authorize} endpoint plus the sign-in steps that endpoint
      * redirects through, and nothing wider.
      *
-     * <p>These six are the non-Google providers in the connector row; Google's own connectors (Drive,
-     * Docs, Sheets, Slides, Gmail, Calendar) reuse {@code accounts.google.com} from
-     * {@link #signInEntries()}. The paths below were checked against each provider's documented OAuth
-     * endpoint on 2026-11-14; a provider that moved its endpoint would fail closed (the pop-up is
-     * refused with a named reason in logcat) rather than quietly widen.</p>
+     * <p>These four are the providers whose whole sign-in flow stays on the host that serves their
+     * authorize endpoint - GitHub, Linear, Vercel and Dropbox. Google's own connectors (Drive, Docs,
+     * Sheets, Slides, Gmail, Calendar) reuse {@code accounts.google.com} from {@link #signInEntries()}.
+     * The paths below were checked against each provider's documented OAuth endpoint on 2026-11-14; a
+     * provider that moved its endpoint would fail closed (the pop-up is refused with a named reason in
+     * logcat) rather than quietly widen.</p>
+     *
+     * <p><b>Notion and Supabase are deliberately absent.</b> Their authorize endpoints live on
+     * {@code api.notion.com} and {@code api.supabase.com}, but a signed-out user is redirected off those
+     * hosts - to {@code www.notion.so/login} and {@code supabase.com/dashboard/sign-in} - and the app's
+     * WebView has its own cookie jar, so it is <em>always</em> signed out. Allow-listing the authorize
+     * endpoint alone would therefore leave the flow dead at the first hop; allowing those two page hosts
+     * instead would put Notion's and Supabase's dashboards, projects and settings inside the wrapper,
+     * which is a far wider page surface than a connector needs. Neither is acceptable, so both are
+     * refused rather than half-supported: connecting Notion or Supabase in this app fails visibly and
+     * immediately instead of appearing to work and then blocking. The site's own Connect button for them
+     * is blocked by the same rule that blocks any off-list navigation.</p>
      */
     public static List<AllowEntry> connectorEntries() {
         List<AllowEntry> entries = new ArrayList<AllowEntry>();
         entries.add(AllowEntry.connectorSignIn("github.com", paths("/login/oauth/authorize", "/login", "/session"),
                 "GitHub connector: the OAuth authorize endpoint and its own sign-in steps. github.com "
                         + "repositories, settings and every other path stay unreachable."));
-        entries.add(AllowEntry.connectorSignIn("api.notion.com", paths("/v1/oauth/authorize"),
-                "Notion connector: the OAuth authorize endpoint only."));
         entries.add(AllowEntry.connectorSignIn("linear.app", paths("/oauth/authorize", "/login", "/signin"),
                 "Linear connector: the OAuth authorize endpoint and its own sign-in steps."));
-        entries.add(AllowEntry.connectorSignIn("api.supabase.com", paths("/v1/oauth/authorize"),
-                "Supabase connector: the OAuth authorize endpoint only."));
         entries.add(AllowEntry.connectorSignIn("vercel.com", paths("/oauth/authorize", "/login"),
                 "Vercel connector: the OAuth authorize endpoint and its own login step."));
         entries.add(AllowEntry.connectorSignIn("www.dropbox.com", paths("/oauth2/authorize", "/login"),

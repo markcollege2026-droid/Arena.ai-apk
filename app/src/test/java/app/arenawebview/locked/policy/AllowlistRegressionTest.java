@@ -77,10 +77,10 @@ public class AllowlistRegressionTest {
                         "www.recaptcha.net",
                         "challenges.cloudflare.com",
                         // Agent Mode connectors: authorize endpoint only (see connectorEntries()).
+                        // Notion and Supabase are deliberately absent - their sign-in lands off the
+                        // authorize host, so they are refused rather than half-supported.
                         "github.com",
-                        "api.notion.com",
                         "linear.app",
-                        "api.supabase.com",
                         "vercel.com",
                         "www.dropbox.com"),
                 ArenaAllowlist.thirdPartyHosts());
@@ -97,8 +97,7 @@ public class AllowlistRegressionTest {
     public void onlyTheReviewedThirdPartyHostsMayEverBecomeAPage() {
         PolicyConfig config = ArenaAllowlist.productionConfig();
         List<String> documentCapableThirdParties = Arrays.asList("accounts.google.com",
-                "github.com", "api.notion.com", "linear.app", "api.supabase.com", "vercel.com",
-                "www.dropbox.com");
+                "github.com", "linear.app", "vercel.com", "www.dropbox.com");
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
             if (entry.isProduct()) {
                 continue;
@@ -206,6 +205,43 @@ public class AllowlistRegressionTest {
     }
 
     /**
+     * Notion and Supabase are refused outright, not half-supported.
+     *
+     * <p>Their authorize endpoints sit on {@code api.notion.com} / {@code api.supabase.com}, but a
+     * signed-out user is redirected to {@code www.notion.so/login} and
+     * {@code supabase.com/dashboard/sign-in} - and the WebView's cookie jar always starts signed out.
+     * Allow-listing only the authorize endpoint would leave a flow that dies at its first hop, and
+     * allow-listing those page hosts would put two dashboards inside the wrapper. Both endpoints are
+     * therefore absent, and this test states that as the intended behaviour rather than an oversight:
+     * if anyone re-adds them, this fails and forces the trade-off to be made explicitly.</p>
+     */
+    @Test
+    public void notionAndSupabaseAreRefusedRatherThanHalfSupported() {
+        PolicyConfig config = ArenaAllowlist.productionConfig();
+        String[] refused = {
+                "https://api.notion.com/v1/oauth/authorize?client_id=x&owner=user",
+                "https://api.supabase.com/v1/oauth/authorize?client_id=x",
+                "https://www.notion.so/login?redirect_uri=https%3A%2F%2Fapi.notion.com%2Fv1%2Foauth%2Fauthorize",
+                "https://supabase.com/dashboard/sign-in?returnTo=%2Fv1%2Foauth%2Fauthorize",
+                "https://notion.so/",
+                "https://supabase.com/",
+        };
+        for (String url : refused) {
+            assertFalse("a half-supported connector must be refused outright: " + url,
+                    config.evaluateNavigation(url).isAllowed());
+        }
+        for (String host : new String[]{"api.notion.com", "api.supabase.com", "www.notion.so",
+                "notion.so", "supabase.com", "www.supabase.com"}) {
+            assertFalse("host must not be on the allow-list: " + host,
+                    ArenaAllowlist.allowedHosts().contains(host));
+        }
+        assertFalse("Notion must not be counted as a page-capable third party",
+                ArenaAllowlist.pageCapableThirdPartyHosts().contains("api.notion.com"));
+        assertFalse("Supabase must not be counted as a page-capable third party",
+                ArenaAllowlist.pageCapableThirdPartyHosts().contains("api.supabase.com"));
+    }
+
+    /**
      * A connector entry is page-capable, so its path pin is the only thing standing between "the
      * provider's OAuth authorize endpoint" and "the provider's whole site". These assertions are the
      * guard for that: every connector entry is path-restricted, and the provider's ordinary pages are
@@ -219,9 +255,7 @@ public class AllowlistRegressionTest {
         // The documented authorize endpoint of every connector is reachable as a page...
         String[][] authorizeUrls = {
                 {"github.com", "https://github.com/login/oauth/authorize?client_id=x&state=y"},
-                {"api.notion.com", "https://api.notion.com/v1/oauth/authorize?owner=user&client_id=x"},
                 {"linear.app", "https://linear.app/oauth/authorize?client_id=x&response_type=code"},
-                {"api.supabase.com", "https://api.supabase.com/v1/oauth/authorize?client_id=x"},
                 {"vercel.com", "https://vercel.com/oauth/authorize?client_id=x"},
                 {"www.dropbox.com", "https://www.dropbox.com/oauth2/authorize?client_id=x"},
         };
@@ -309,8 +343,8 @@ public class AllowlistRegressionTest {
                 Arrays.asList("indexable.arena.ai", "blog.arena.ai", "news.arena.ai"),
                 ArenaAllowlist.demotedFirstPartyHosts());
         assertEquals("page-capable third parties, pinned",
-                Arrays.asList("accounts.google.com", "github.com", "api.notion.com", "linear.app",
-                        "api.supabase.com", "vercel.com", "www.dropbox.com"),
+                Arrays.asList("accounts.google.com", "github.com", "linear.app", "vercel.com",
+                        "www.dropbox.com"),
                 ArenaAllowlist.pageCapableThirdPartyHosts());
 
         // The live blog, help, status and trust centres remain pages.

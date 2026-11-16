@@ -15,14 +15,22 @@ or download the `arena-webview-apk` artifact from the [Actions runs](https://git
 > measured, and [docs/EVIDENCE.md](docs/EVIDENCE.md) for the raw CI output.
 
 **What is new in 1.4.0 (site re-audit):**
-* **Agent Mode connectors can be linked inside the app.** Arena's *Connectors* (GitHub, Notion, Linear,
-  Supabase, Vercel, Dropbox; Google's own connectors use the existing sign-in host) open an OAuth window
-  from `arena.ai/agent`. Each provider is now a `Role.CONNECTOR` entry that is **page-capable only at its
-  exact OAuth `authorize` path** - `/login/oauth/authorize` on `github.com`, `/v1/oauth/authorize` on
-  `api.notion.com`, `/oauth/authorize` on `linear.app`, `/v1/oauth/authorize` on `api.supabase.com`,
-  `/oauth/authorize` on `vercel.com`, `/oauth2/authorize` on `www.dropbox.com` - plus that endpoint's own
-  sign-in steps. The rest of each provider (dashboards, repositories, files, mail, token endpoints) stays
-  unreachable, exactly as before. Switch: `ArenaAllowlist.ENABLE_AGENT_CONNECTORS`.
+* **Agent Mode connectors can be linked inside the app.** Arena's *Connectors* open an OAuth window from
+  `arena.ai/agent`. Four providers are supported - GitHub, Linear, Vercel and Dropbox - each as a
+  `Role.CONNECTOR` entry that is **page-capable only at its exact OAuth `authorize` path**
+  (`/login/oauth/authorize` on `github.com`, `/oauth/authorize` on `linear.app` and `vercel.com`,
+  `/oauth2/authorize` on `www.dropbox.com`) plus that endpoint's own sign-in steps. Google's own
+  connectors reuse the existing `accounts.google.com` sign-in host. The rest of each provider
+  (dashboards, repositories, files, token endpoints) stays unreachable. Switch:
+  `ArenaAllowlist.ENABLE_AGENT_CONNECTORS`.
+* **The OAuth window now survives Arena's own staging page.** This was a real bug, and it is why
+  connectors did not work at all: Arena opens a connector by first loading *its own* page in the new
+  window ("you will be sent to X to sign in") and only then redirecting to the provider. The router
+  only promoted a window for a sign-in URL, so that first Arena.ai hop was treated as an ordinary
+  pop-up - folded into the main view, window destroyed - which also severed `window.opener` and broke
+  the site's own `postMessage` callback. The symptom was an allow-list block *and* an error from the
+  site at the same time. An Arena.ai page is now accepted on the first hop, so the window stays open
+  for the whole hand-off. See `RELEASE_NOTES.md` for the full diagnosis.
 * **Three stale first-party hosts are demoted to assets.** `blog.arena.ai` and `news.arena.ai` both
   return Cloudflare `522` (origin down) and the site now serves the blog from `arena.ai/blog`;
   `indexable.arena.ai` is a pre-render object bucket with no browsable root. They remain reachable for
@@ -188,13 +196,18 @@ actually redirects to, matched **exactly**:
 | Connector | Host | Reachable path(s) |
 | --- | --- | --- |
 | GitHub | `github.com` | `/login/oauth/authorize`, plus `/login` and `/session` (its own sign-in steps) |
-| Notion | `api.notion.com` | `/v1/oauth/authorize` |
 | Linear | `linear.app` | `/oauth/authorize`, plus `/login`, `/signin` |
-| Supabase | `api.supabase.com` | `/v1/oauth/authorize` |
 | Vercel | `vercel.com` | `/oauth/authorize`, plus `/login` |
 | Dropbox | `www.dropbox.com` | `/oauth2/authorize`, plus `/login` |
 
-That is the whole widening: six hosts, each displayable only at an OAuth authorize endpoint. Their token
+**Notion and Supabase are deliberately not supported.** Their authorize endpoints sit on
+`api.notion.com` and `api.supabase.com`, but a signed-out user is redirected to `www.notion.so/login`
+and `supabase.com/dashboard/sign-in` - and the WebView has its own cookie jar, so it is *always* signed
+out. Allowing only the authorize endpoint would leave a flow that dies at its first hop; allowing those
+two page hosts would put both dashboards inside the wrapper. Refusing them outright is the honest
+option: pressing Connect for either fails immediately and visibly instead of appearing to work.
+
+That is the whole widening: four hosts, each displayable only at an OAuth authorize endpoint. Their token
 endpoints, dashboards, repositories, files and every other path are refused as pages, and
 `connectorEntriesArePageCapableOnlyAtTheirAuthorizeEndpoint` fails the build if that ever stops being
 true. Set `ArenaAllowlist.ENABLE_AGENT_CONNECTORS` to `false` to remove all six; linking a connector then

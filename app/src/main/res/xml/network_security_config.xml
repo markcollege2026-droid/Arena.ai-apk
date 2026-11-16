@@ -33,9 +33,7 @@
         <!-- Agent Mode connectors: page-capable, but confined by the runtime policy to their OAuth
              authorize endpoint only (see ArenaAllowlist.connectorEntries). -->
         <domain includeSubdomains="false">github.com</domain>
-        <domain includeSubdomains="false">api.notion.com</domain>
         <domain includeSubdomains="false">linear.app</domain>
-        <domain includeSubdomains="false">api.supabase.com</domain>
         <domain includeSubdomains="false">vercel.com</domain>
         <domain includeSubdomains="false">www.dropbox.com</domain>
         <trust-anchors>

@@ -115,9 +115,23 @@ public final class PopupRouterClient extends ArenaWebViewClient {
         // reachable). A connector window therefore behaves exactly like the Google hand-off: it stays
         // open, it is policed on every hop, and it can only ever show those two kinds of page plus
         // Arena.ai itself.
+        //
+        // An Arena.ai page is now allowed on the *first* hop too, not only after promotion. Arena opens a
+        // connector by first loading its own staging page in the new window ("you will be sent to X to
+        // sign in") and only then redirecting to the provider, so the user has to be able to see and
+        // click through that page. Refusing it used to destroy the window before any sign-in could
+        // start: the URL was routed into the main view, the window - and with it window.opener - was
+        // gone, and the site's own postMessage callback never fired. That is why the failure showed up
+        // as both an allow-list block and an error from the site itself.
+        //
+        // The cost is deliberate and bounded: a pop-up that lands on an Arena.ai page stays in this
+        // window instead of being folded into the main view, so a target="_blank" link now opens a
+        // guarded in-app window rather than replacing the page. Both are the same policy-checked
+        // WebView, this window is destroyed as soon as the page closes, and nothing can navigate it
+        // beyond Arena.ai and the pinned sign-in endpoints.
         boolean signInStep = host.policy().isSignInNavigation(url);
         boolean sitePage = host.policy().isProductNavigation(url);
-        if (promotedToSignInWindow ? (signInStep || sitePage) : signInStep) {
+        if (signInStep || sitePage) {
             // The sign-in / connector hand-off. The window has to stay alive because the provider's page
             // returns its result to the page that opened it through window.opener/postMessage - a flow
             // that only works if the window it opened still exists.
@@ -127,6 +141,13 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             //      authorize endpoint and its sign-in steps), and
             //   2. the return hop to Arena.ai's callback URL, which is where the site reads the result and
             //      usually closes the window itself with window.close().
+            if (isHandOffComplete(url)) {
+                // The hand-off is over and the site did not close its own window. Close it here so the
+                // user is not left staring at a finished sign-in floating over the app.
+                host.onSignInWindowNavigated(url);
+                finish();
+                return true;
+            }
             if (!promotedToSignInWindow) {
                 promotedToSignInWindow = true;
                 host.metrics().increment(PolicyMetrics.Counter.SIGN_IN_WINDOWS);
@@ -145,6 +166,54 @@ public final class PopupRouterClient extends ArenaWebViewClient {
         host.loadVerifiedDestination(url, "popup");
         finish();
         return true;
+    }
+
+    /**
+     * True when this pop-up has finished its hand-off and landed back on Arena.ai's own page.
+     *
+     * <p>A successful OAuth window is expected to return to an Arena.ai callback URL, where the site
+     * reads the result and calls {@code window.close()} itself, or to the root page. Only the second
+     * shape needs help: if the window sits on the app's root page with no callback parameters left, the
+     * hand-off is over and the window has nothing further to show, so it closes itself rather than
+     * hanging open over the app.</p>
+     *
+     * <p>A callback URL is deliberately <em>not</em> matched - that is the page that reads the result,
+     * and closing it early would throw the result away.</p>
+     */
+    static boolean isHandOffComplete(String url) {
+        if (url == null || url.isEmpty()) {
+            return false;
+        }
+        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        int schemeEnd = lower.indexOf("://");
+        if (schemeEnd < 0 || !lower.startsWith("https://")) {
+            return false;
+        }
+        String rest = lower.substring(schemeEnd + 3);
+        int slash = rest.indexOf('/');
+        String host = slash < 0 ? rest : rest.substring(0, slash);
+        int colon = host.indexOf(':');
+        if (colon >= 0) {
+            host = host.substring(0, colon);
+        }
+        if (!host.equals("arena.ai") && !host.equals("www.arena.ai")) {
+            return false;
+        }
+        if (slash < 0) {
+            return true;
+        }
+        String pathAndQuery = rest.substring(slash);
+        int hash = pathAndQuery.indexOf('#');
+        if (hash >= 0) {
+            pathAndQuery = pathAndQuery.substring(0, hash);
+        }
+        int question = pathAndQuery.indexOf('?');
+        String path = question < 0 ? pathAndQuery : pathAndQuery.substring(0, question);
+        String query = question < 0 ? "" : pathAndQuery.substring(question + 1);
+        if (!path.isEmpty() && !"/".equals(path)) {
+            return false;
+        }
+        return query.isEmpty();
     }
 
     /** about:blank, data: and blob: are the inert bootstrap locations of a brand new window. */

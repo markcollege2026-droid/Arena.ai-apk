@@ -319,7 +319,7 @@ public class SourceInvariantsTest {
             assertTrue("connector paths must be exact, not prefixes: " + entry.host(),
                     entry.isExactPaths());
         }
-        assertTrue("this build has connectors enabled", connectors >= 6);
+        assertTrue("this build has connectors enabled", connectors >= 4);
 
         // The router has exactly one promotion decision, and it is the policy's.
         String router = code("app/arenawebview/locked/web/PopupRouterClient.java");
@@ -327,6 +327,13 @@ public class SourceInvariantsTest {
         assertFalse("the router must not hard-code a provider host", router.contains("github.com"));
         assertFalse("the router must not hard-code a provider host", router.contains("notion"));
         assertFalse("the router must not hard-code a provider host", router.contains("dropbox"));
+
+        // The window must survive Arena's own staging page ("you will be sent to X to sign in"), which
+        // is an Arena.ai page and not a sign-in URL. Gating the first hop on isSignInNavigation alone
+        // destroyed the window before the provider was ever reached, which severed window.opener and
+        // broke every connector - see the diagnosis in RELEASE_NOTES.md.
+        assertTrue("the first hop may be an Arena.ai staging page",
+                router.contains("isProductNavigation(url)"));
     }
 
     /**
