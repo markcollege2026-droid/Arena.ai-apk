@@ -135,28 +135,29 @@ public final class PopupRouterClient extends ArenaWebViewClient {
         // open, it is policed on every hop, and it can only ever show those two kinds of page plus
         // Arena.ai itself.
         //
-        // An Arena.ai page is now allowed on the *first* hop too, not only after promotion. Arena opens a
-        // connector by first loading its own staging page in the new window ("you will be sent to X to
-        // sign in") and only then redirecting to the provider, so the user has to be able to see and
-        // click through that page. Refusing it used to destroy the window before any sign-in could
-        // start: the URL was routed into the main view, the window - and with it window.opener - was
-        // gone, and the site's own postMessage callback never fired. That is why the failure showed up
-        // as both an allow-list block and an error from the site itself.
+        // An Arena.ai page is allowed on the *first* hop, but only for a window the connector flow
+        // opened. Arena does not navigate straight to a provider: it opens a pop-up on its own staging
+        // page ("you will be sent to X to sign in") and only then redirects. Refusing that page used to
+        // destroy the window before any sign-in could start - the URL was routed into the main view, the
+        // window (and with it window.opener) was gone, and the site's own postMessage callback never
+        // fired, which is why the failure showed up both as an allow-list block and as a site error.
         //
-        // The cost is deliberate and bounded: a pop-up that lands on an Arena.ai page stays in this
-        // window instead of being folded into the main view, so a target="_blank" link now opens a
-        // guarded in-app window rather than replacing the page. Both are the same policy-checked
-        // WebView, this window is destroyed as soon as the page closes, and nothing can navigate it
-        // beyond Arena.ai and the pinned sign-in endpoints.
+        // The exception is kept as narrow as the bug: it applies only when the opener is the Agent page,
+        // the one place a connector hand-off can begin. Every other pop-up - including one whose opener
+        // could not be read - keeps the original guarantee that an allowed Arena.ai target is folded
+        // into the single visible WebView and this window is discarded. And an already-promoted window
+        // keeps the return hop to Arena.ai's callback, because that page is what reads the result.
         boolean signInStep = host.policy().isSignInNavigation(url);
         boolean sitePage = host.policy().isProductNavigation(url);
-        // An Arena.ai page may keep this window only when the window came from the connector hand-off.
-        // Arena opens a connector by loading its own staging page here first ("you will be sent to X to
-        // sign in"), so that page has to be displayable or the flow dies before it starts. Every other
-        // pop-up keeps the original guarantee: an allowed Arena.ai target is folded into the single
-        // visible WebView and this window is discarded.
+        // The two narrow ways an Arena.ai page may stay in this window:
+        //   1. the connector flow is starting and this is its staging page - only when the window was
+        //      opened from the Agent page, so no other pop-up can acquire a window this way; and
+        //   2. the window is already the hand-off window and the site is returning to its callback,
+        //      which is the page that reads the result and must not be moved.
+        // Anything else is folded into the single visible WebView, exactly as before.
         boolean stagingHop = sitePage && flowConnector && startsInConnectorFlow();
-        if (signInStep || stagingHop) {
+        boolean returnHop = promotedToSignInWindow && sitePage;
+        if (signInStep || returnHop || stagingHop) {
             // The sign-in / connector hand-off. The window has to stay alive because the provider's page
             // returns its result to the page that opened it through window.opener/postMessage - a flow
             // that only works if the window it opened still exists.

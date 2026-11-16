@@ -340,6 +340,10 @@ public class SourceInvariantsTest {
         // what stops a target="_blank" link from leaving a second window on screen.
         assertTrue("the staging-page exception must be gated on the opener",
                 router.contains("startsInConnectorFlow()"));
+        // A promoted window must keep the return hop to Arena.ai's callback: that page reads the OAuth
+        // result, and moving it into the main view would throw the result away.
+        assertTrue("the promoted window must keep the return hop",
+                router.contains("promotedToSignInWindow && sitePage"));
         assertTrue("the exception must require a connector-flow window", router.contains("flowConnector"));
         assertTrue("the exception must be limited to the Agent page", router.contains("\"/agent\""));
     }
