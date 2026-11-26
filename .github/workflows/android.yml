@@ -407,18 +407,12 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import glob, os, re
-          for path in sorted(glob.glob('docs/evidence/responsive/*.txt')):
-              lines = [l.strip() for l in open(path, errors='replace') if 'responsive probe' in l]
-              for line in lines[:5]:
-                  print('::notice title=' + os.path.basename(path) + '::' + line.replace('%', '%25'))
-          for path in sorted(glob.glob('docs/evidence/responsive/gradle-*.log')):
-              log = open(path, errors='replace').read().splitlines()
-              interesting = [l for l in log if re.search(
-                  r'error:|FAILED|What went wrong|Execution failed|Exception|No tests|INSTRUMENTATION', l)]
-              text = '\n'.join(interesting[-40:] or log[-40:])
+          import glob, os
+          print('::notice title=Responsive annotation step::ran')
+          for path in sorted(glob.glob('docs/evidence/responsive/*')):
+              text = open(path, errors='replace').read()[-1600:]
               text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-              print('::error title=Responsive test failure at ' + os.path.basename(path) + '::' + text[:1700])
+              print(f'::notice title=Evidence {os.path.basename(path)}::{text}')
           PY
 
       - name: Upload responsive evidence
