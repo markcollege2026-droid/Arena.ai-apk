@@ -78,7 +78,9 @@ jobs:
                   continue
               for case in root.iter('testcase'):
                   total += 1
-                  problem = case.find('failure') or case.find('error')
+                  problem = case.find('failure')
+                  if problem is None:
+                      problem = case.find('error')
                   if problem is None:
                       continue
                   failures += 1
