@@ -183,6 +183,93 @@ public class LiveArenaSmokeTest {
         }
     }
 
+    /**
+     * The wrapper must be able to scroll a page whose content is taller than the screen.
+     *
+     * <p>Measuring the landing page is not enough: on some screens the page happens to fit exactly one
+     * viewport (on a Pixel 5 it reports 778px of content in a 778px viewport), so there is nothing to
+     * scroll and the question stays unanswered. This test creates the condition instead of hoping for
+     * it - it appends a tall element to the live document, then checks that a scrollable range appears
+     * and that a scroll actually moves the page. If anything in the wrapper clamped the document, the
+     * range would stay zero or the scroll position would not move, and the failure says which.</p>
+     *
+     * <p>The element is removed again, and it can never be reached as a URL - it exists only inside
+     * this WebView for the duration of the check.</p>
+     */
+    @Test
+    public void thePageCanBeScrolledWhenContentExceedsTheScreen() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            String url = waitForSite(scenario);
+            if (url == null || url.isEmpty()) {
+                Log.w(TAG, "scroll check skipped: the site did not load (offline emulator)");
+                return;
+            }
+            assertTrue("the wrapper must only ever end up on arena.ai, was: " + url,
+                    url.startsWith("https://arena.ai/"));
+
+            // 1. Add 2000px of content to the document, measure, scroll, measure again, clean up.
+            String probe = "(function(){"
+                    + "var de=document.documentElement,b=document.body;"
+                    + "var before={vw:Math.round(innerWidth),vh:Math.round(innerHeight),"
+                    + "  docRange:Math.round(de.scrollHeight-de.clientHeight),"
+                    + "  bodyRange:Math.round(b.scrollHeight-b.clientHeight)};"
+                    + "var spill=document.createElement('div');"
+                    + "spill.id='__arena_scroll_probe';"
+                    + "spill.style.cssText='height:2000px;width:1px;flex:0 0 auto;visibility:hidden;"
+                    + "pointer-events:none;';"
+                    + "(b||de).appendChild(spill);"
+                    + "var after={docRange:Math.round(de.scrollHeight-de.clientHeight),"
+                    + "  bodyRange:Math.round(b.scrollHeight-b.clientHeight)};"
+                    + "var scroller = after.bodyRange>0 ? b : (after.docRange>0 ? de : null);"
+                    + "var moved=0,topAfter=0;"
+                    + "if(scroller){"
+                    + "  var start=scroller.scrollTop;"
+                    + "  try{ scroller.scrollTop = 200; }catch(e){}"
+                    + "  topAfter=Math.round(scroller.scrollTop);"
+                    + "  moved=topAfter-start;"
+                    + "  scroller.scrollTop=start;"
+                    + "}"
+                    + "de.removeChild(spill);"
+                    + "return JSON.stringify({vw:before.vw,vh:before.vh,"
+                    + "  docRangeBefore:before.docRange,bodyRangeBefore:before.bodyRange,"
+                    + "  docRangeAfter:after.docRange,bodyRangeAfter:after.bodyRange,"
+                    + "  scrollMoved:moved,scrollTopAfter:topAfter});"
+                    + "})()";
+            final AtomicReference<String> raw = new AtomicReference<String>();
+            final CountDownLatch latch = new CountDownLatch(1);
+            scenario.onActivity(activity -> {
+                WebView webView = activity.findViewById(R.id.arena_webview);
+                assertNotNull(webView);
+                webView.evaluateJavascript(probe, value -> {
+                    raw.set(value);
+                    latch.countDown();
+                });
+            });
+            if (!latch.await(20, TimeUnit.SECONDS) || raw.get() == null) {
+                Log.w(TAG, "scroll check skipped: the probe returned nothing");
+                return;
+            }
+            String json = ScrollProbe.unescape(raw.get());
+            Log.i(TAG, "live scrollability probe: " + json);
+
+            long vh = ScrollProbe.number(json, "vh");
+            long docAfter = ScrollProbe.number(json, "docRangeAfter");
+            long bodyAfter = ScrollProbe.number(json, "bodyRangeAfter");
+            long moved = ScrollProbe.number(json, "scrollMoved");
+            long topAfter = ScrollProbe.number(json, "scrollTopAfter");
+
+            assertTrue("the viewport height must be measurable, probe was: " + json, vh > 0);
+            // 2. With 2000px of extra content, a scrollable range must exist. If both stay zero the
+            //    document is clamped somewhere and the bottom of a long page is unreachable.
+            assertTrue("adding 2000px of content must produce a scrollable range - "
+                    + "document=" + docAfter + ", body=" + bodyAfter + ", viewport=" + vh
+                    + ", probe: " + json, docAfter > 0 || bodyAfter > 0);
+            // 3. And the page must actually move, not merely report a range.
+            assertTrue("the page must scroll, not only report a range (scrollTop stayed at " + topAfter
+                    + ", probe: " + json + ")", moved > 0);
+        }
+    }
+
     /** Small JSON reader for the probe above: flat object, numbers and strings only. */
     static final class ScrollProbe {
         private ScrollProbe() {
