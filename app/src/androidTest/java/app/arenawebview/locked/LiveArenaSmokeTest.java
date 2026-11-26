@@ -220,20 +220,27 @@ public class LiveArenaSmokeTest {
                     + "(b||de).appendChild(spill);"
                     + "var after={docRange:Math.round(de.scrollHeight-de.clientHeight),"
                     + "  bodyRange:Math.round(b.scrollHeight-b.clientHeight)};"
-                    + "var scroller = after.bodyRange>0 ? b : (after.docRange>0 ? de : null);"
-                    + "var moved=0,topAfter=0;"
-                    + "if(scroller){"
-                    + "  var start=scroller.scrollTop;"
-                    + "  try{ scroller.scrollTop = 200; }catch(e){}"
-                    + "  topAfter=Math.round(scroller.scrollTop);"
-                    + "  moved=topAfter-start;"
-                    + "  scroller.scrollTop=start;"
+                    // The scrolling element in standards mode is document.scrollingElement (the html
+                    // element); body.scrollTop is a no-op when body is not the scroller. Try the real
+                    // scroller first, then body, and report which one moved.
+                    + "var candidates=[document.scrollingElement||de, de, b];"
+                    + "var moved=0,topAfter=0,used='';"
+                    + "for(var ci=0; ci<candidates.length && moved===0; ci++){"
+                    + "  var sc=candidates[ci];"
+                    + "  if(!sc) continue;"
+                    + "  var start=sc.scrollTop;"
+                    + "  try{ sc.scrollTop = 200; }catch(e){}"
+                    + "  var now=Math.round(sc.scrollTop);"
+                    + "  var winY=Math.round(window.scrollY||window.pageYOffset||0);"
+                    + "  if(now-start!==0 || winY>0){ moved = now-start !== 0 ? now-start : winY; topAfter=now;"
+                    + "    used = (sc===b?'body':(sc===de?'html':'scrollingElement')); }"
+                    + "  try{ sc.scrollTop=start; }catch(e){}"
                     + "}"
                     + "de.removeChild(spill);"
                     + "return JSON.stringify({vw:before.vw,vh:before.vh,"
                     + "  docRangeBefore:before.docRange,bodyRangeBefore:before.bodyRange,"
                     + "  docRangeAfter:after.docRange,bodyRangeAfter:after.bodyRange,"
-                    + "  scrollMoved:moved,scrollTopAfter:topAfter});"
+                    + "  scrollMoved:moved,scrollTopAfter:topAfter,scrollUsed:used});"
                     + "})()";
             final AtomicReference<String> raw = new AtomicReference<String>();
             final CountDownLatch latch = new CountDownLatch(1);
@@ -265,8 +272,10 @@ public class LiveArenaSmokeTest {
                     + "document=" + docAfter + ", body=" + bodyAfter + ", viewport=" + vh
                     + ", probe: " + json, docAfter > 0 || bodyAfter > 0);
             // 3. And the page must actually move, not merely report a range.
+            String used = ScrollProbe.text(json, "scrollUsed");
             assertTrue("the page must scroll, not only report a range (scrollTop stayed at " + topAfter
-                    + ", probe: " + json + ")", moved > 0);
+                    + ", tried scrollingElement/html/body, probe: " + json + ")", moved > 0);
+            Log.i(TAG, "the live page scrolled via " + used + " by " + moved + "px");
         }
     }
 
