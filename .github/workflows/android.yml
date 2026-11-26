@@ -345,7 +345,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.scope != 'core'
     name: Responsive tests (${{ matrix.screen }})
     runs-on: ubuntu-latest
-    needs: unit-tests
+    # No dependency on unit-tests: the responsive job must also be dispatchable on its own.
     strategy:
       fail-fast: false
       matrix:
