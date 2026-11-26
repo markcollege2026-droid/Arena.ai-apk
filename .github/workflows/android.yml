@@ -21,6 +21,12 @@ on:
       - 'v*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: 'Run all jobs, or only the responsive-screen matrix (for quick diagnosis).'
+        type: choice
+        default: all
+        options: [all, responsive]
 
 permissions:
   contents: write
@@ -31,6 +37,7 @@ concurrency:
 
 jobs:
   unit-tests:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope != 'responsive'
     name: Unit tests (JVM)
     runs-on: ubuntu-latest
     steps:
@@ -111,6 +118,7 @@ jobs:
           retention-days: 30
 
   build-apk:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope != 'responsive'
     name: Build APK
     runs-on: ubuntu-latest
     needs: unit-tests
@@ -200,6 +208,7 @@ jobs:
           retention-days: 90
 
   instrumented-tests:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope != 'responsive'
     name: Instrumented tests (emulator)
     runs-on: ubuntu-latest
     needs: unit-tests
@@ -333,6 +342,7 @@ jobs:
           retention-days: 30
 
   responsive-tests:
+    if: github.event_name != 'workflow_dispatch' || inputs.scope != 'core'
     name: Responsive tests (${{ matrix.screen }})
     runs-on: ubuntu-latest
     needs: unit-tests
@@ -379,11 +389,14 @@ jobs:
             adb shell settings put system accelerometer_rotation 0
             adb shell settings put system user_rotation 0
             adb logcat -c || true
+            set -o pipefail
             ./gradlew --no-daemon :app:connectedDebugAndroidTest \
-              --tests 'app.arenawebview.locked.web.ResponsiveScrollTest' --stacktrace
+              --tests 'app.arenawebview.locked.web.ResponsiveScrollTest' --stacktrace \
+              2>&1 | tee docs/evidence/responsive/gradle-${{ matrix.screen }}.log
             adb logcat -d -s ArenaWebViewLocked:V > docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
             echo "=== responsive probe at ${{ matrix.screen }} ==="
             grep 'responsive probe' docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
+          test "${PIPESTATUS[0]}" = 0
 
       - name: Publish responsive probe as an annotation
         if: always()
@@ -395,6 +408,13 @@ jobs:
               lines = [l.strip() for l in open(path, errors='replace') if 'responsive probe' in l]
               for line in lines[:5]:
                   print('::notice title=' + os.path.basename(path) + '::' + line.replace('%', '%25'))
+          for path in sorted(glob.glob('docs/evidence/responsive/gradle-*.log')):
+              log = open(path, errors='replace').read().splitlines()
+              interesting = [l for l in log if re.search(
+                  r'error:|FAILED|What went wrong|Execution failed|Exception|No tests|INSTRUMENTATION', l)]
+              text = '\n'.join(interesting[-40:] or log[-40:])
+              text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print('::error title=Responsive test failure at ' + os.path.basename(path) + '::' + text[:1700])
           PY
 
       - name: Upload responsive evidence
