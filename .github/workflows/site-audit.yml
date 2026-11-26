@@ -17,7 +17,8 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  # Only the small, derived Markdown report is committed back; raw probe bodies stay in the artifact.
+  contents: write
 
 concurrency:
   group: site-audit-${{ github.ref }}
@@ -164,6 +165,22 @@ jobs:
             echo '```'
           } > docs/evidence/site-audit/site-audit.md
           cat docs/evidence/site-audit/site-audit.md
+
+      - name: Commit the derived audit report
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/evidence/site-audit/site-audit.md docs/evidence/site-audit/scripts/hits.txt
+          if git diff --cached --quiet; then
+            echo 'No change to the derived audit report.'
+            exit 0
+          fi
+          # [skip ci] keeps the report from triggering a second audit or a duplicate APK build.
+          git commit -m "CI: record live site audit [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Upload audit evidence
         uses: actions/upload-artifact@v4
