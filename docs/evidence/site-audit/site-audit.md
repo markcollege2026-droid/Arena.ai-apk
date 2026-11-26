@@ -1,7 +1,7 @@
 # Live site audit
 
-Run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45847914411
-UTC: 2026-11-26 15:20:25
+Run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45848181262
+UTC: 2026-11-26 15:22:00
 
 | Probe | HTTP | Requested | Effective |
 | --- | --- | --- | --- |
@@ -34,7 +34,7 @@ UTC: 2026-11-26 15:20:25
 | docs-agent | 200 | https://help.arena.ai/articles/5432423882-how-to-use-agent-mode | https://help.arena.ai/articles/5432423882-how-to-use-agent-mode |
 | docs-coding | 200 | https://help.arena.ai/articles/1655691990-how-to-use-coding-in-agent-mode | https://help.arena.ai/articles/1655691990-how-to-use-coding-in-agent-mode |
 | docs-account | 200 | https://help.arena.ai/articles/7258407731-arena-how-to-create-an-account | https://help.arena.ai/articles/7258407731-arena-how-to-create-an-account |
-| oauth-google | 200 | https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=example.invalid&redirect_uri=https%3A%2F%2Farena.ai%2F | https://accounts.google.com/signin/oauth/error?authError=Cg9pbnZhbGlkX3JlcXVlc3QSIU1pc3NpbmcgcmVxdWlyZWQgcGFyYW1ldGVyOiBzY29wZRo3aHR0cHM6Ly9kZXZlbG9wZXJzLmdvb2dsZS5jb20vaWRlbnRpdHkvcHJvdG9jb2xzL29hdXRoMiCQAw&flowName=GeneralOAuthFlow&client_id=example.invalid&as=S-1539758408%3A1795706379607058&aes=AYsA2T1t8YatoJsXRk2psKE3xII0 |
+| oauth-google | 200 | https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=example.invalid&redirect_uri=https%3A%2F%2Farena.ai%2F | https://accounts.google.com/signin/oauth/error?authError=Cg9pbnZhbGlkX3JlcXVlc3QSIU1pc3NpbmcgcmVxdWlyZWQgcGFyYW1ldGVyOiBzY29wZRo3aHR0cHM6Ly9kZXZlbG9wZXJzLmdvb2dsZS5jb20vaWRlbnRpdHkvcHJvdG9jb2xzL29hdXRoMiCQAw&flowName=GeneralOAuthFlow&client_id=example.invalid&as=S520597902%3A1795706474512619&aes=AYsA2T1t8YatoJsXRk2psKE3xII0 |
 | oauth-github | 200 | https://github.com/login/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://github.com/login?client_id=example&return_to=%2Flogin%2Foauth%2Fauthorize%3Fclient_id%3Dexample%26redirect_uri%3Dhttps%253A%252F%252Farena.ai%252F%26response_type%3Dcode |
 | oauth-notion | 200 | https://api.notion.com/v1/oauth/authorize?owner=user&response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://app.notion.com/install-integration?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F&owner=user |
 | oauth-linear | 200 | https://linear.app/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://linear.app/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F |
@@ -44,7 +44,7 @@ UTC: 2026-11-26 15:20:25
 | link-jobs | 200 | https://jobs.ashbyhq.com/arena | https://jobs.ashbyhq.com/arena |
 | link-discord | 200 | https://discord.com/invite/LMArena | https://discord.com/invite/LMArena |
 | link-youtube | 200 | https://www.youtube.com/watch?v=79sSH0Y8FA4 | https://www.youtube.com/watch?v=79sSH0Y8FA4 |
-| link-x | 403 | https://x.com/arena | https://x.com/arena |
+| link-x | 200 | https://x.com/arena | https://x.com/arena |
 
 ## Script references to OAuth/connector hosts
 ```text
