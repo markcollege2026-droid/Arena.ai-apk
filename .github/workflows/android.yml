@@ -393,10 +393,11 @@ jobs:
             ./gradlew --no-daemon :app:connectedDebugAndroidTest \
               --tests 'app.arenawebview.locked.web.ResponsiveScrollTest' --stacktrace \
               2>&1 | tee docs/evidence/responsive/gradle-${{ matrix.screen }}.log
+            GRADLE_EXIT="${PIPESTATUS[0]}"
             adb logcat -d -s ArenaWebViewLocked:V > docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
             echo "=== responsive probe at ${{ matrix.screen }} ==="
             grep 'responsive probe' docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
-          test "${PIPESTATUS[0]}" = 0
+            test "$GRADLE_EXIT" = 0
 
       - name: Publish responsive probe as an annotation
         if: always()
