@@ -407,12 +407,22 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
-          import glob, os
+          import glob, os, re, xml.etree.ElementTree as ET
+          def esc(s):
+              return s.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           print('::notice title=Responsive annotation step::ran')
           for path in sorted(glob.glob('docs/evidence/responsive/*')):
               text = open(path, errors='replace').read()[-1600:]
-              text = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-              print(f'::notice title=Evidence {os.path.basename(path)}::{text}')
+              print(f'::notice title=Evidence {os.path.basename(path)}::{esc(text)}')
+          for path in sorted(glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True)):
+              root = ET.parse(path).getroot()
+              for case in root.iter('testcase'):
+                  problem = case.find('failure') if case.find('failure') is not None else case.find('error')
+                  if problem is not None:
+                      msg = ((problem.get('message') or '') + '\n' + (problem.text or ''))[-1600:]
+                      print('::error title=Responsive test ' + case.get('name', '?') + '::' + esc(msg))
+          if not glob.glob('docs/evidence/responsive/*'):
+              print('::error title=Responsive evidence missing::No evidence files were produced')
           PY
 
       - name: Upload responsive evidence
