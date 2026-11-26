@@ -20,10 +20,9 @@ import java.util.Set;
  * edit to {@link ArenaAllowlist} that widens it (a new host, a "convenience" wildcard, an extra
  * third-party entry) fails here and forces the change to be deliberate and visible in review.</p>
  *
- * <p>The Google sign-in and CAPTCHA groups are enabled in this build, and every host in them is pinned
- * below - including the two facts that matter most: {@code accounts.google.com} is the <em>only</em>
- * third-party host that may become a page, and every other third-party host is asset-only and
- * path-scoped.</p>
+ * <p>The Google sign-in, CAPTCHA and Agent Mode connector groups are enabled in this build. Every host
+ * is pinned below, together with what it is allowed to be: a product page, a sign-in window page, a
+ * connector window page, or an asset that can never be a document.</p>
  */
 public class AllowlistRegressionTest {
 
@@ -32,14 +31,23 @@ public class AllowlistRegressionTest {
             "www.arena.ai",
             "auth.arena.ai",
             "cdn.arena.ai",
+            "indexable.arena.ai",
             "agent.arena.ai",
             "code.arena.ai",
-            "indexable.arena.ai",
-            "blog.arena.ai",
-            "news.arena.ai",
             "help.arena.ai",
             "status.arena.ai",
             "trust.arena.ai");
+
+    private static final List<String> CONNECTOR_HOSTS = Arrays.asList(
+            "github.com",
+            "api.notion.com",
+            "app.notion.com",
+            "www.notion.so",
+            "linear.app",
+            "api.supabase.com",
+            "supabase.com",
+            "vercel.com",
+            "www.dropbox.com");
 
     @Test
     public void startPageIsArenaAi() {
@@ -75,30 +83,50 @@ public class AllowlistRegressionTest {
                         "lh3.googleusercontent.com",
                         "www.google.com",
                         "www.recaptcha.net",
-                        "challenges.cloudflare.com"),
+                        "challenges.cloudflare.com",
+                        "github.com",
+                        "github.githubassets.com",
+                        "api.notion.com",
+                        "app.notion.com",
+                        "www.notion.so",
+                        "linear.app",
+                        "api.supabase.com",
+                        "supabase.com",
+                        "vercel.com",
+                        "www.dropbox.com"),
                 ArenaAllowlist.thirdPartyHosts());
     }
 
     @Test
-    public void signInAndCaptchaGroupsAreEnabledWithTheReviewedSwitches() {
+    public void allCapabilityGroupsAreEnabledWithTheReviewedSwitches() {
         assertTrue("sign-in with a Google account is enabled in this build",
                 ArenaAllowlist.ENABLE_GOOGLE_SIGN_IN);
         assertTrue("CAPTCHA widgets are enabled in this build", ArenaAllowlist.ENABLE_CAPTCHA_WIDGETS);
+        assertTrue("Agent Mode connector hand-offs are enabled in this build",
+                ArenaAllowlist.ENABLE_AGENT_CONNECTORS);
     }
 
     @Test
-    public void exactlyOneThirdPartyHostMayEverBecomeAPage() {
+    public void onlyTheReviewedThirdPartiesMayBecomePages() {
         PolicyConfig config = ArenaAllowlist.productionConfig();
-        List<String> documentCapableThirdParties = Arrays.asList("accounts.google.com");
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
-            if (entry.isProduct()) {
+            if (EXPECTED_FIRST_PARTY_HOSTS.contains(entry.host())) {
                 continue;
             }
-            boolean documentCapable = !entry.isResourceOnly();
-            assertEquals("unexpected document-capable third party: " + entry.host(),
-                    documentCapable, documentCapableThirdParties.contains(entry.host()));
-            assertEquals("unexpected role for " + entry.host(),
-                    documentCapable ? AllowEntry.Role.SIGN_IN : AllowEntry.Role.ASSET, entry.role());
+            if (entry.isSignIn()) {
+                assertEquals("unexpected sign-in host: " + entry.host(),
+                        "accounts.google.com", entry.host());
+            } else if (entry.isConnector()) {
+                assertTrue("unexpected connector host: " + entry.host(),
+                        CONNECTOR_HOSTS.contains(entry.host()));
+                assertTrue("a connector page belongs to the OAuth window only: " + entry.host(),
+                        config.evaluatePrimaryDocument("https://" + entry.host()
+                                + entry.pathPrefixes().get(0) + "x").isAllowed() == false);
+            } else {
+                assertTrue("third-party host must be asset-only: " + entry.host(),
+                        entry.isResourceOnly());
+                assertEquals(AllowEntry.Role.ASSET, entry.role());
+            }
         }
         // ... and the sign-in host is the one the flow actually uses.
         assertTrue(ArenaAllowlist.isSignInHost("accounts.google.com"));
@@ -108,13 +136,22 @@ public class AllowlistRegressionTest {
         assertFalse(config.isSignInNavigation("https://arena.ai/"));
         assertTrue(config.isProductNavigation("https://arena.ai/leaderboard"));
         assertFalse(config.isProductNavigation("https://accounts.google.com/signin"));
+
+        for (String host : CONNECTOR_HOSTS) {
+            assertTrue(ArenaAllowlist.isConnectorHost(host));
+            assertFalse("a connector host is never a Google sign-in host", ArenaAllowlist.isSignInHost(host));
+            assertFalse("a connector host must never be the app's own page",
+                    config.isProductNavigation("https://" + host + "/"));
+        }
+        assertFalse(ArenaAllowlist.isConnectorHost("accounts.google.com"));
+        assertFalse(ArenaAllowlist.isConnectorHost("github.com.evil.example"));
     }
 
     @Test
     public void everyThirdPartyAssetEntryIsResourceOnlyAndReviewableAtItsPathScope() {
-        // Everything third-party is asset-only: none of these hosts can ever be the app's page.
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
-            if (entry.isProduct() || entry.isSignIn()) {
+            if (EXPECTED_FIRST_PARTY_HOSTS.contains(entry.host())
+                    || entry.isSignIn() || entry.isConnector()) {
                 continue;
             }
             assertTrue("third-party entry must be resource only (never a page): " + entry.host(),
@@ -124,21 +161,18 @@ public class AllowlistRegressionTest {
             }
         }
 
-        // Path restrictions are the rule; the hosts below are the reviewed exceptions, and they are
-        // exceptions for one reason: Google serves its identity UI from content-hashed paths that change
-        // with every deployment, so any prefix list would break sign-in again (it did once - see
-        // TEST_REPORT.md). Widening this set must be a deliberate edit here as well.
-        List<String> deliberatelyUnrestricted = Arrays.asList("ssl.gstatic.com", "www.gstatic.com");
+        // Content-hashed asset paths cannot be enumerated; these are the reviewed exceptions.
+        List<String> deliberatelyUnrestricted = Arrays.asList(
+                "ssl.gstatic.com", "www.gstatic.com", "github.githubassets.com");
         for (AllowEntry entry : ArenaAllowlist.activeEntries()) {
-            if (entry.isProduct() || entry.isSignIn() || entry.isPathRestricted()) {
+            if (EXPECTED_FIRST_PARTY_HOSTS.contains(entry.host())
+                    || entry.isSignIn() || entry.isConnector() || entry.isPathRestricted()) {
                 continue;
             }
-            {
-                assertTrue("a path-unrestricted third-party host must be a reviewed exception: " + entry.host(),
-                        deliberatelyUnrestricted.contains(entry.host()));
-                assertTrue("a path-unrestricted host must still be asset-only: " + entry.host(),
-                        entry.isResourceOnly());
-            }
+            assertTrue("a path-unrestricted third-party host must be a reviewed exception: " + entry.host(),
+                    deliberatelyUnrestricted.contains(entry.host()));
+            assertTrue("a path-unrestricted host must still be asset-only: " + entry.host(),
+                    entry.isResourceOnly());
         }
         for (String host : deliberatelyUnrestricted) {
             assertTrue("the reviewed exception list must match reality: " + host,
@@ -147,8 +181,8 @@ public class AllowlistRegressionTest {
     }
 
     /**
-     * The two groups want the same Google asset host, and a host may only appear once in the policy
-     * ({@code findByHost} returns the first match), so the merged entry must carry every path.
+     * Two groups can want the same host (Google's {@code www.gstatic.com} serves sign-in and reCAPTCHA
+     * assets), and a host may only appear once in the policy. The merged entry must carry every path.
      */
     @Test
     public void mergedEntriesKeepEveryPathPrefix() {
@@ -157,9 +191,6 @@ public class AllowlistRegressionTest {
         assertEquals("a host must never be listed twice: " + hosts,
                 hosts.size(), new java.util.HashSet<String>(hosts).size());
 
-        // Two groups want the same host (sign-in assets and the reCAPTCHA bundles both live on
-        // www.gstatic.com): whichever is wider must survive the merge, or one flow silently loses its
-        // assets - which is exactly the class of bug this whole change is about.
         for (String path : Arrays.asList("/accounts/t.js", "/gsi/c.js", "/recaptcha/r.js",
                 "/_/mss/boq-identity/_/js/k=boq-identity.AccountsSignInUi.en.x/y")) {
             assertTrue("merged path must stay reachable: " + path,
@@ -168,8 +199,6 @@ public class AllowlistRegressionTest {
         assertTrue("the wider (unrestricted) entry must win the merge",
                 config.findByHost("www.gstatic.com").pathPrefixes().isEmpty());
 
-        // The merge itself: two restricted groups union their prefixes, and an unrestricted entry stays
-        // unrestricted instead of being narrowed by the other group.
         List<AllowEntry> union = ArenaAllowlist.merge(Arrays.asList(
                 Arrays.asList(AllowEntry.resourceOnly("merge.example", Arrays.asList("/a/"), "one")),
                 Arrays.asList(AllowEntry.resourceOnly("merge.example", Arrays.asList("/b/"), "two"))));
@@ -185,16 +214,17 @@ public class AllowlistRegressionTest {
     }
 
     @Test
-    public void turningTheSwitchesOffRemovesEveryGoogleHost() {
-        // The groups themselves describe what would be reachable if enabled; the *active* set is what
-        // matters, and it is derived from the switches. Assert the groups are well-formed so that
-        // flipping a switch back cannot accidentally enable something unreviewed.
+    public void eachSwitchOnlyControlsItsOwnGroup() {
         for (AllowEntry entry : ArenaAllowlist.signInEntries()) {
             assertTrue("sign-in group must be pinned to one document host",
                     entry.isSignIn() || entry.isResourceOnly());
         }
         for (AllowEntry entry : ArenaAllowlist.captchaEntries()) {
             assertTrue("CAPTCHA group must be asset-only", entry.isResourceOnly());
+        }
+        for (AllowEntry entry : ArenaAllowlist.connectorEntries()) {
+            assertTrue("connector group must only contain connector pages or their assets",
+                    entry.isConnector() || entry.isResourceOnly());
         }
     }
 
@@ -234,6 +264,9 @@ public class AllowlistRegressionTest {
                 "arena-ai.com",
                 "arenaai.com",
                 "getarena.ai",
+                // Removed after the live audit: both hosts returned 522 and blog moved to /blog.
+                "blog.arena.ai",
+                "news.arena.ai",
                 // Google hosts that are NOT part of the sign-in flow and must stay unreachable:
                 "mail.google.com",
                 "drive.google.com",
@@ -247,6 +280,12 @@ public class AllowlistRegressionTest {
                 "lh4.googleusercontent.com",
                 "ogs.google.com",
                 "accounts.google.com.evil.example",
+                // Connector look-alikes and services that Arena does not list as connectors:
+                "github.com.evil.example",
+                "api.notion.com.evil.example",
+                "www.dropbox.com.evil.example",
+                "slack.com",
+                "mail.github.com",
         };
         PolicyConfig config = ArenaAllowlist.productionConfig();
         for (String host : excluded) {
@@ -261,6 +300,10 @@ public class AllowlistRegressionTest {
         assertTrue(description.contains("start=https://arena.ai/"));
         for (String host : EXPECTED_FIRST_PARTY_HOSTS) {
             assertTrue("description must mention " + host, description.contains("allow " + host));
+        }
+        for (String host : CONNECTOR_HOSTS) {
+            assertTrue("description must explain the connector role for " + host,
+                    description.contains("allow " + host + " [connector sign-in window only]"));
         }
     }
 }

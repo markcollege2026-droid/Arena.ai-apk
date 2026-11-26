@@ -77,6 +77,12 @@ public enum BlockReason {
      */
     DOCUMENT_NOT_ALLOWED("that domain may serve page resources but must never become the page", Category.PATH),
 
+    /**
+     * The host is a legitimate Agent Mode connector provider, but that login page belongs exclusively
+     * in the in-app OAuth window. It can never replace the visible Arena.ai page.
+     */
+    CONNECTOR_WINDOW_ONLY("connector sign-in pages are only allowed in the in-app sign-in window", Category.PATH),
+
     /** A capability (file chooser / media capture / geolocation / download) was refused. */
     CAPABILITY_DISABLED("that browser capability is disabled in this wrapper", Category.CAPABILITY),
 

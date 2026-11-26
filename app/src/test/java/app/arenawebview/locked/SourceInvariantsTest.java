@@ -345,6 +345,38 @@ public class SourceInvariantsTest {
     }
 
     /**
+     * Connector pages are the deliberate exception to the page allow-list, so the code that decides
+     * which WebView may show them is security-relevant. The main client and the main watchdog must ask
+     * the stricter question; only the pop-up router may promote a connector URL into a window.
+     */
+    @Test
+    public void connectorPagesAreConfinedToTheOAuthWindow() throws Exception {
+        String client = code("app/arenawebview/locked/web/ArenaWebViewClient.java");
+        String router = code("app/arenawebview/locked/web/PopupRouterClient.java");
+        String main = code("app/arenawebview/locked/MainActivity.java");
+        String policy = code("app/arenawebview/locked/policy/PolicyConfig.java");
+
+        assertTrue("the main client must use the stricter document question",
+                client.contains("host.policy().evaluatePrimaryDocument(url)"));
+        assertFalse("the main client must never use the window-only document question",
+                client.contains("host.policy().evaluateNavigation(url)"));
+        assertTrue("the main watchdog must use the stricter question too",
+                main.contains("policy.evaluatePrimaryDocument(current)"));
+        assertTrue("the popup router must still use the window-aware question",
+                router.contains("host.policy().evaluateNavigation(url)"));
+        assertTrue("the router must recognise connector steps",
+                router.contains("host.policy().isConnectorNavigation(url)"));
+        assertTrue("the router must hold first-party staging hops",
+                router.contains("host.policy().isHandoffStagingNavigation(url)"));
+        assertTrue("the grace period must be bounded",
+                router.contains("STAGING_GRACE_MS"));
+        assertTrue("the policy must define the stricter question",
+                policy.contains("public PolicyResult evaluatePrimaryDocument(String rawUrl)"));
+        assertTrue("a connector refusal must have its own reason",
+                code("app/arenawebview/locked/policy/BlockReason.java").contains("CONNECTOR_WINDOW_ONLY"));
+    }
+
+    /**
      * The three questions must stay three questions.
      *
      * <p>If {@code evaluateSubdocument} ever collapses back into {@code evaluateNavigation}, every widget

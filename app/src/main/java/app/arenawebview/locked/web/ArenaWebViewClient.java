@@ -240,8 +240,10 @@ public class ArenaWebViewClient extends WebViewClient {
         // An iframe is judged as an embedded document, not as the app's page: a widget frame from an
         // asset host is allowed to render, while the main frame may only ever be an Arena.ai or sign-in
         // page. This is the difference between "the app can show this" and "the app can fetch this".
+        // The main WebView is stricter than the OAuth window: a connector provider's login page is
+        // a valid document there, but it must never become the app's own page.
         PolicyResult result = mainFrame
-                ? host.policy().evaluateNavigation(url)
+                ? host.policy().evaluatePrimaryDocument(url)
                 : host.policy().evaluateSubdocument(url);
         if (result.isAllowed()) {
             if (mainFrame) {
@@ -267,7 +269,7 @@ public class ArenaWebViewClient extends WebViewClient {
     @Override
     @SuppressWarnings("deprecation")
     public boolean shouldOverrideUrlLoading(WebView view, String url) {
-        PolicyResult result = host.policy().evaluateNavigation(url);
+        PolicyResult result = host.policy().evaluatePrimaryDocument(url);
         if (result.isAllowed()) {
             return false;
         }
@@ -295,7 +297,7 @@ public class ArenaWebViewClient extends WebViewClient {
         // must pass the embedded-document rules; sub-resources inside an approved page use evaluateRequest.
         PolicyResult result;
         if (request.isForMainFrame()) {
-            result = host.policy().evaluateNavigation(url);
+            result = host.policy().evaluatePrimaryDocument(url);
         } else if (isSubdocumentRequest(request)) {
             result = host.policy().evaluateSubdocument(url);
         } else {
@@ -397,7 +399,7 @@ public class ArenaWebViewClient extends WebViewClient {
             // Hidden popup windows never drive the visible UI; their own client handles routing.
             return;
         }
-        PolicyResult result = host.policy().evaluateNavigation(url);
+        PolicyResult result = host.policy().evaluatePrimaryDocument(url);
         if (!result.isAllowed()) {
             host.metrics().increment(PolicyMetrics.Counter.RECOVERY_RELOADS);
             host.metrics().recordBlock(result.reason(), result.canonicalHost(), url);
@@ -430,7 +432,7 @@ public class ArenaWebViewClient extends WebViewClient {
         if (!host.isPrimaryWebView(view)) {
             return;
         }
-        PolicyResult result = host.policy().evaluateNavigation(url);
+        PolicyResult result = host.policy().evaluatePrimaryDocument(url);
         if (!result.isAllowed()) {
             host.metrics().increment(PolicyMetrics.Counter.RECOVERY_RELOADS);
             host.metrics().recordBlock(result.reason(), result.canonicalHost(), url);

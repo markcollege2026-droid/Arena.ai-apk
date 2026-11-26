@@ -290,6 +290,83 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  responsive-tests:
+    name: Responsive tests (${{ matrix.screen }})
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        # Phone portrait, phone landscape and a small tablet. The app's main page grew with Agent Mode;
+        # this matrix measures that it still reaches the end and that the sidebar scrolls on all three.
+        screen: ['720x1280', '1280x720', '800x1280']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Measure scrollability at ${{ matrix.screen }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_5
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            set -x
+            mkdir -p docs/evidence/responsive
+            adb shell wm size ${{ matrix.screen }}
+            adb shell wm density 320
+            adb shell settings put system accelerometer_rotation 0
+            adb shell settings put system user_rotation 0
+            adb logcat -c || true
+            ./gradlew --no-daemon :app:connectedDebugAndroidTest \
+              --tests 'app.arenawebview.locked.web.ResponsiveScrollTest' --stacktrace
+            adb logcat -d -s ArenaWebViewLocked:V > docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
+            echo "=== responsive probe at ${{ matrix.screen }} ==="
+            grep 'responsive probe' docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
+
+      - name: Publish responsive probe as an annotation
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, os, re
+          for path in sorted(glob.glob('docs/evidence/responsive/*.txt')):
+              lines = [l.strip() for l in open(path, errors='replace') if 'responsive probe' in l]
+              for line in lines[:5]:
+                  print('::notice title=' + os.path.basename(path) + '::' + line.replace('%', '%25'))
+          PY
+
+      - name: Upload responsive evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: responsive-evidence-${{ matrix.screen }}
+          path: |
+            docs/evidence/responsive/**
+            app/build/reports/androidTests/connected/**
+            app/build/outputs/androidTest-results/**
+          if-no-files-found: warn
+          retention-days: 30
+
   release:
     name: Publish release
     runs-on: ubuntu-latest

@@ -37,10 +37,38 @@ import app.arenawebview.locked.policy.PolicyResult;
  */
 public final class PopupRouterClient extends ArenaWebViewClient {
 
+    /** A first-party staging page is kept hidden for at most this long before normal routing wins. */
+    private static final long STAGING_GRACE_MS = 8000L;
+
     private final WebView popup;
     private final Runnable onClosed;
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private volatile boolean closed;
     private boolean promotedToSignInWindow;
+    private boolean stagingCandidate;
+    private String stagedUrl;
+
+    /**
+     * If a blank pop-up was pointed at an Arena staging page and never became an OAuth hand-off, treat
+     * that first-party page like every other ordinary pop-up target: show it in the single WebView and
+     * destroy the extra window. The timeout bounds the grace period, so no hidden WebView accumulates.
+     */
+    private final Runnable stagingTimeout = new Runnable() {
+        @Override
+        public void run() {
+            if (closed || promotedToSignInWindow || !stagingCandidate || stagedUrl == null) {
+                return;
+            }
+            String url = stagedUrl;
+            stagingCandidate = false;
+            stagedUrl = null;
+            GuardHost host = host();
+            host.metrics().increment(PolicyMetrics.Counter.ROUTED_POPUPS);
+            host.onPopupRouted(url);
+            host.loadVerifiedDestination(url, "popup-staging");
+            finish();
+        }
+    };
 
     public PopupRouterClient(GuardHost host, WebView popup, Runnable onClosed) {
         super(host);
@@ -77,10 +105,9 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             // so a subsequent real navigation can still be routed, but never display anything.
             return false;
         }
-        // The same rule as the main client: a main frame may only ever be an Arena.ai page or a sign-in
-        // page, while a document embedded in this window (an iframe) is judged as an embedded document -
-        // otherwise a widget frame - or a CAPTCHA that Google's own sign-in page embeds - would be
-        // cancelled and the flow would die half-way through.
+        // The same policy question as the main client, with one difference: this window may display a
+        // connector provider's OAuth page, while the main WebView may never do so. Embedded documents
+        // (widget/CAPTCHA frames) are judged with the in-page rules.
         PolicyResult result = mainFrame
                 ? host.policy().evaluateNavigation(url)
                 : host.policy().evaluateSubdocument(url);
@@ -95,7 +122,7 @@ public final class PopupRouterClient extends ArenaWebViewClient {
                 host.onPopupBlocked(url, result);
             }
             // A refused sub-document only loses its frame: tearing down the whole window would end a
-            // sign-in because some tracker on Google's page was refused. A refused *navigation*
+            // sign-in because some tracker on the provider's page was refused. A refused *navigation*
             // (main frame) still ends the window - it has nowhere legitimate left to go.
             if (mainFrame || !promotedToSignInWindow) {
                 finish();
@@ -109,36 +136,61 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             return false;
         }
 
-        // --- main frame: only a sign-in step or an Arena.ai page may live here --------------------
+        // --- main frame: a sign-in step, a connector OAuth step or an Arena.ai page ---------------
         boolean signInStep = host.policy().isSignInNavigation(url);
+        boolean connectorStep = host.policy().isConnectorNavigation(url);
         boolean sitePage = host.policy().isProductNavigation(url);
-        if (promotedToSignInWindow ? (signInStep || sitePage) : signInStep) {
-            // The sign-in hand-off. The window has to stay alive because Google's page returns its result
-            // to the page that opened it through window.opener/postMessage - a flow that only works if the
-            // window it opened still exists.
-            //
-            // Two kinds of navigation belong to that hand-off and both stay in this window:
-            //   1. Google's own pages (the OAuth consent page, the identifier and password steps), and
-            //   2. the return hop to Arena.ai's callback URL, which is where the site reads the result and
-            //      usually closes the window itself with window.close().
-            if (!promotedToSignInWindow) {
-                promotedToSignInWindow = true;
-                host.metrics().increment(PolicyMetrics.Counter.SIGN_IN_WINDOWS);
-                host.onSignInWindowRequested(popup, url);
-            } else {
+        boolean handOffStep = signInStep || connectorStep;
+
+        if (promotedToSignInWindow) {
+            if (sitePage || handOffStep) {
+                // Both halves of the hand-off stay here: the provider's login/consent pages and the
+                // first-party callback/staging page that reads the result and calls window.close().
+                cancelStaging();
                 host.onSignInWindowNavigated(url);
+                return false;
             }
+            // An unrelated allowed page must not turn the auth window into a browser.
+            routeToPrimary(url, "popup");
+            return true;
+        }
+
+        if (handOffStep) {
+            cancelStaging();
+            promotedToSignInWindow = true;
+            host.metrics().increment(PolicyMetrics.Counter.SIGN_IN_WINDOWS);
+            host.onSignInWindowRequested(popup, url);
             return false;
         }
 
-        // Any other allowed page: keep the single-view guarantee - hand it to the one visible WebView and
-        // discard the throwaway window Chromium created. A URL the policy allows but that is not part of
-        // this hand-off can never gain a window of its own.
+        if (sitePage && host.policy().isHandoffStagingNavigation(url)) {
+            // Arena sometimes opens a blank pop-up and writes a first-party staging URL into it before
+            // redirecting to the provider. Hold the window hidden for a bounded grace period; only a
+            // sign-in/connector URL promotes it, otherwise the ordinary single-view routing wins.
+            stagingCandidate = true;
+            stagedUrl = url;
+            handler.removeCallbacks(stagingTimeout);
+            handler.postDelayed(stagingTimeout, STAGING_GRACE_MS);
+            return false;
+        }
+
+        routeToPrimary(url, "popup");
+        return true;
+    }
+
+    private void cancelStaging() {
+        stagingCandidate = false;
+        stagedUrl = null;
+        handler.removeCallbacks(stagingTimeout);
+    }
+
+    private void routeToPrimary(String url, String source) {
+        cancelStaging();
+        GuardHost host = host();
         host.metrics().increment(PolicyMetrics.Counter.ROUTED_POPUPS);
         host.onPopupRouted(url);
-        host.loadVerifiedDestination(url, "popup");
+        host.loadVerifiedDestination(url, source);
         finish();
-        return true;
     }
 
     /** about:blank, data: and blob: are the inert bootstrap locations of a brand new window. */
@@ -188,6 +240,7 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             return;
         }
         closed = true;
+        cancelStaging();
         if (onClosed != null) {
             onClosed.run();
         }

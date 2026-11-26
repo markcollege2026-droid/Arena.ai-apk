@@ -78,6 +78,12 @@ public final class ArenaAllowlist {
      */
     public static final boolean ENABLE_CAPTCHA_WIDGETS = true;
 
+    /**
+     * Agent Mode connector OAuth hand-offs. Setting this to {@code false} removes every connector
+     * provider host from the policy: the wrapper then behaves like the first-party + Google-only build.
+     */
+    public static final boolean ENABLE_AGENT_CONNECTORS = true;
+
     static {
         List<String> hosts = new ArrayList<String>();
         for (AllowEntry entry : firstPartyEntries()) {
@@ -109,6 +115,9 @@ public final class ArenaAllowlist {
         if (ENABLE_CAPTCHA_WIDGETS) {
             groups.add(captchaEntries());
         }
+        if (ENABLE_AGENT_CONNECTORS) {
+            groups.add(connectorEntries());
+        }
         entries.addAll(merge(groups));
         return Collections.unmodifiableList(entries);
     }
@@ -121,17 +130,56 @@ public final class ArenaAllowlist {
         List<AllowEntry> entries = new ArrayList<AllowEntry>();
         entries.add(AllowEntry.anyPath("arena.ai", "The product itself (canonical host)."));
         entries.add(AllowEntry.anyPath("www.arena.ai", "Canonical alternate host for the same site."));
-        entries.add(AllowEntry.anyPath("auth.arena.ai",
-                "First-party authentication service (session/credential API for sign-in)."));
-        entries.add(AllowEntry.anyPath("cdn.arena.ai", "First-party static asset CDN."));
-        entries.add(AllowEntry.anyPath("agent.arena.ai", "Agent Mode first-party endpoint."));
-        entries.add(AllowEntry.anyPath("code.arena.ai", "Code/artifact first-party endpoint."));
-        entries.add(AllowEntry.anyPath("indexable.arena.ai", "Pre-rendered content used by the site."));
-        entries.add(AllowEntry.anyPath("blog.arena.ai", "First-party blog (linked from the site)."));
-        entries.add(AllowEntry.anyPath("news.arena.ai", "First-party news pages (linked from the site)."));
+        // Live audit (2026-11-26, docs/evidence/site-audit/site-audit.md): these three hosts still
+        // serve data to the app but their document roots are 404. They are first-party *endpoints*,
+        // not pages, so the resource-only role is the accurate description.
+        entries.add(AllowEntry.resourceOnly("auth.arena.ai", Collections.<String>emptyList(),
+                "First-party authentication endpoint; serves no page at its root (HTTP 404)."));
+        entries.add(AllowEntry.resourceOnly("cdn.arena.ai", Collections.<String>emptyList(),
+                "First-party static asset CDN; serves no page at its root (HTTP 404)."));
+        entries.add(AllowEntry.resourceOnly("indexable.arena.ai", Collections.<String>emptyList(),
+                "Pre-rendered content/social images; serves no page at its root (HTTP 404)."));
+        // agent. and code. still redirect to /agent and /code on the canonical host (HTTP 200).
+        entries.add(AllowEntry.anyPath("agent.arena.ai", "Agent Mode first-party endpoint (redirects to /agent)."));
+        entries.add(AllowEntry.anyPath("code.arena.ai", "Code/artifact endpoint (redirects to /code)."));
         entries.add(AllowEntry.anyPath("help.arena.ai", "First-party help centre (linked from the site)."));
         entries.add(AllowEntry.anyPath("status.arena.ai", "First-party status page (linked from the site)."));
         entries.add(AllowEntry.anyPath("trust.arena.ai", "First-party trust/compliance centre (linked from the site)."));
+        // blog.arena.ai and news.arena.ai were removed: the live audit returned 522 for both, and the
+        // site links its blog at https://arena.ai/blog (covered by the canonical host).
+        return Collections.unmodifiableList(entries);
+    }
+
+    /**
+     * Agent Mode connector OAuth pages. These are the hosts that the live Arena documentation and
+     * provider OAuth APIs actually use (see docs/evidence/site-audit/site-audit.md). Every entry is
+     * exact-host and path-pinned, and the role is {@code CONNECTOR}: the URL may be displayed in the
+     * one in-app OAuth window, never in the main WebView and never in a general-purpose browser.
+     */
+    public static List<AllowEntry> connectorEntries() {
+        List<AllowEntry> entries = new ArrayList<AllowEntry>();
+        entries.add(AllowEntry.connector("github.com", paths("/login/oauth/authorize", "/login"),
+                "GitHub OAuth authorize/login screens (the live authorize URL redirects to /login)."));
+        entries.add(AllowEntry.resourceOnly("github.githubassets.com", Collections.<String>emptyList(),
+                "GitHub's content-hashed login/consent assets; sub-resources and frames only."));
+        entries.add(AllowEntry.connector("api.notion.com", Collections.singletonList("/v1/oauth/authorize"),
+                "Notion's documented OAuth authorization endpoint."));
+        entries.add(AllowEntry.connector("app.notion.com", Collections.singletonList("/install-integration"),
+                "The Notion install/consent screen the live authorize endpoint redirects to."));
+        entries.add(AllowEntry.connector("www.notion.so", paths("/login", "/logout"),
+                "Notion's account login screen when a workspace sign-in is required."));
+        entries.add(AllowEntry.connector("linear.app", paths("/oauth/authorize", "/login"),
+                "Linear's documented OAuth authorize endpoint and its login screen."));
+        entries.add(AllowEntry.connector("api.supabase.com",
+                Collections.singletonList("/v1/oauth/authorize"),
+                "Supabase's documented integration OAuth authorization endpoint."));
+        entries.add(AllowEntry.connector("supabase.com", Collections.singletonList("/login"),
+                "Supabase dashboard login screen when connecting an account."));
+        entries.add(AllowEntry.connector("vercel.com", paths("/oauth/authorize", "/login"),
+                "Vercel's documented OAuth authorization endpoint and login screen."));
+        entries.add(AllowEntry.connector("www.dropbox.com",
+                paths("/oauth2/authorize", "/oauth2/authorize_error", "/login"),
+                "Dropbox OAuth consent, its error page, and the login screen."));
         return Collections.unmodifiableList(entries);
     }
 
@@ -192,11 +240,26 @@ public final class ArenaAllowlist {
     public static List<String> thirdPartyHosts() {
         List<String> hosts = new ArrayList<String>();
         for (AllowEntry entry : activeEntries()) {
-            if (!entry.isProduct()) {
+            // auth./cdn./indexable. are first-party endpoints with a resource-only role; they are not
+            // third-party hosts even though they are not navigable pages.
+            if (!FIRST_PARTY_HOSTS.contains(entry.host())) {
                 hosts.add(entry.host());
             }
         }
         return Collections.unmodifiableList(hosts);
+    }
+
+    /** True when this exact host is an Agent Mode connector provider in this build. */
+    public static boolean isConnectorHost(String canonicalHost) {
+        if (canonicalHost == null) {
+            return false;
+        }
+        for (AllowEntry entry : activeEntries()) {
+            if (entry.isConnector() && entry.host().equals(canonicalHost)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** True when this exact host may be displayed as a sign-in page in the runner-up window. */

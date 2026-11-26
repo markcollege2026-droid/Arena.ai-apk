@@ -1431,7 +1431,9 @@ public class MainActivity extends Activity implements GuardHost {
         if (current == null || current.isEmpty()) {
             return;
         }
-        PolicyResult result = policy.evaluateNavigation(current);
+        // The main view is stricter than the OAuth window: a connector provider's login page is fine
+        // inside that window, but must never be the page the user is left looking at.
+        PolicyResult result = policy.evaluatePrimaryDocument(current);
         if (result.isAllowed()) {
             return;
         }
@@ -1463,11 +1465,18 @@ public class MainActivity extends Activity implements GuardHost {
             return;
         }
         PolicyResult result = policy.evaluateNavigation(current);
-        if (result.isAllowed()) {
+        boolean handOffPage = result.isAllowed() && result.matchedEntry() != null
+                && (result.matchedEntry().isProduct() || result.matchedEntry().isSignIn()
+                || result.matchedEntry().isConnector());
+        if (handOffPage) {
             return;
         }
-        metrics.recordBlock(result.reason(), result.canonicalHost(), current);
-        Log.w(TAG, "sign-in window was on a non-approved URL, closing it: " + result.describe());
+        PolicyResult reported = result.isAllowed()
+                ? PolicyResult.block(app.arenawebview.locked.policy.BlockReason.DOCUMENT_NOT_ALLOWED,
+                        result.canonicalHost(), current, "not a sign-in or connector page")
+                : result;
+        metrics.recordBlock(reported.reason(), reported.canonicalHost(), current);
+        Log.w(TAG, "sign-in window was on a non-approved URL, closing it: " + reported.describe());
         closeSignInWindow("watchdog:" + (result.reason() == null ? "?" : result.reason().name()));
     }
 

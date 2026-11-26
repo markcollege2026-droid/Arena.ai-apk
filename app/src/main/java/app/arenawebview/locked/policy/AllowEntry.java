@@ -35,7 +35,16 @@ public final class AllowEntry {
         /** A third-party asset host: sub-resources only, never a page. */
         ASSET,
         /** A third-party page that is part of a sign-in hand-off (Google's OAuth pages). */
-        SIGN_IN
+        SIGN_IN,
+        /**
+         * A third-party page that is one step of an Agent Mode connector's OAuth flow.
+         *
+         * <p>A connector page is a document, like {@link #SIGN_IN}, but it is <em>only</em> allowed
+         * inside the in-app OAuth window. {@link PolicyConfig#evaluatePrimaryDocument(String)} refuses
+         * it for the main WebView, so a connector login can never replace the Arena.ai page the user
+         * is looking at.</p>
+         */
+        CONNECTOR
     }
 
     /** Exact canonical host, lower case, ASCII. */
@@ -107,6 +116,14 @@ public final class AllowEntry {
         return new AllowEntry(host, pathPrefixes, purpose, Role.SIGN_IN);
     }
 
+    /**
+     * Convenience factory for a connector provider's OAuth/consent page. Such a host may become the
+     * document of the in-app OAuth window only; it can never become the app's main page.
+     */
+    public static AllowEntry connector(String host, List<String> pathPrefixes, String purpose) {
+        return new AllowEntry(host, pathPrefixes, purpose, Role.CONNECTOR);
+    }
+
     /** True when this host may serve sub-resources but must never become the visible document. */
     public boolean isResourceOnly() {
         return role == Role.ASSET;
@@ -115,6 +132,11 @@ public final class AllowEntry {
     /** True when this entry is a step of a sign-in hand-off rather than an Arena.ai page. */
     public boolean isSignIn() {
         return role == Role.SIGN_IN;
+    }
+
+    /** True when this entry is one step of an Agent Mode connector's OAuth hand-off. */
+    public boolean isConnector() {
+        return role == Role.CONNECTOR;
     }
 
     /** True when this entry is part of the product itself. */
@@ -203,6 +225,8 @@ public final class AllowEntry {
             sb.append(" [resource-only]");
         } else if (role == Role.SIGN_IN) {
             sb.append(" [sign-in page]");
+        } else if (role == Role.CONNECTOR) {
+            sb.append(" [connector sign-in window only]");
         }
         if (isPathRestricted()) {
             sb.append(" paths=").append(pathPrefixes);

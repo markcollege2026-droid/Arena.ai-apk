@@ -389,6 +389,72 @@ public final class PolicyCases {
         doc(cases, "a blob is never a page, whatever its origin", "blob:https://www.google.com/1a2b3c4d",
                 false, BlockReason.UNSUPPORTED_SCHEME);
 
+        // --- Agent Mode connector OAuth windows ---------------------------------------------------
+        doc(cases, "GitHub OAuth authorize URL",
+                "https://github.com/login/oauth/authorize?response_type=code&client_id=arena", true, null);
+        doc(cases, "GitHub login hop the live authorize URL redirects to",
+                "https://github.com/login?client_id=arena&return_to=%2Flogin%2Foauth%2Fauthorize", true, null);
+        doc(cases, "Notion OAuth authorize URL",
+                "https://api.notion.com/v1/oauth/authorize?owner=user&client_id=arena", true, null);
+        doc(cases, "Notion consent screen the live authorize URL redirects to",
+                "https://app.notion.com/install-integration?client_id=arena", true, null);
+        doc(cases, "Notion workspace login screen", "https://www.notion.so/login?src=oauth", true, null);
+        doc(cases, "Linear OAuth authorize URL",
+                "https://linear.app/oauth/authorize?response_type=code&client_id=arena", true, null);
+        doc(cases, "Supabase OAuth authorize URL",
+                "https://api.supabase.com/v1/oauth/authorize?response_type=code&client_id=arena", true, null);
+        doc(cases, "Vercel OAuth authorize URL",
+                "https://vercel.com/oauth/authorize?response_type=code&client_id=arena", true, null);
+        doc(cases, "Dropbox OAuth authorize URL",
+                "https://www.dropbox.com/oauth2/authorize?response_type=code&client_id=arena", true, null);
+        doc(cases, "Dropbox invalid-client error page",
+                "https://www.dropbox.com/oauth2/authorize_error?error_name=unknown_client_id", true, null);
+        doc(cases, "Google connector consent uses the existing account host",
+                "https://accounts.google.com/o/oauth2/v2/auth?client_id=arena.apps.googleusercontent.com", true, null);
+
+        doc(cases, "GitHub login assets may never be a page",
+                "https://github.githubassets.com/assets/abc123.css", false, BlockReason.DOCUMENT_NOT_ALLOWED);
+        frame(cases, "GitHub login assets can be framed in the OAuth window",
+                "https://github.githubassets.com/assets/abc123.js", true, null);
+        sub(cases, "connector provider API remains an ordinary backend sub-resource",
+                "https://api.linear.app/graphql", true, null);
+        sub(cases, "blob minted by a GitHub sign-in window", "blob:https://github.com/uuid", true, null);
+        doc(cases, "a connector blob is never a page", "blob:https://github.com/uuid",
+                false, BlockReason.UNSUPPORTED_SCHEME);
+
+        doc(cases, "connector host look-alike stays refused",
+                "https://github.com.evil.example/login/oauth/authorize", false, BlockReason.HOST_NOT_ALLOWED);
+        doc(cases, "Notion look-alike stays refused",
+                "https://api.notion.com.evil.example/v1/oauth/authorize", false, BlockReason.HOST_NOT_ALLOWED);
+        doc(cases, "GitHub path outside the reviewed OAuth/login paths",
+                "https://github.com/settings/tokens", false, BlockReason.PATH_NOT_ALLOWED);
+        doc(cases, "Notion path outside the authorize endpoint",
+                "https://api.notion.com/v1/users", false, BlockReason.PATH_NOT_ALLOWED);
+        doc(cases, "path traversal out of a connector path pin",
+                "https://api.notion.com/v1/oauth/authorize/../../admin", false, BlockReason.PATH_NOT_ALLOWED);
+        doc(cases, "percent-encoded escape out of a connector path pin",
+                "https://github.com/login%2F..%2Fadmin", false, BlockReason.PATH_NOT_ALLOWED);
+        doc(cases, "http to a connector provider stays refused",
+                "http://github.com/login/oauth/authorize", false, BlockReason.SCHEME_NOT_HTTPS);
+
+        // --- first-party endpoints demoted by the live audit ---------------------------------------
+        doc(cases, "auth.arena.ai serves no page", "https://auth.arena.ai/",
+                false, BlockReason.DOCUMENT_NOT_ALLOWED);
+        sub(cases, "auth.arena.ai remains a first-party endpoint",
+                "https://auth.arena.ai/v1/session", true, null);
+        doc(cases, "cdn.arena.ai serves no page", "https://cdn.arena.ai/a.js",
+                false, BlockReason.DOCUMENT_NOT_ALLOWED);
+        doc(cases, "indexable.arena.ai serves no page", "https://indexable.arena.ai/routes/x.jpg",
+                false, BlockReason.DOCUMENT_NOT_ALLOWED);
+        sub(cases, "indexable.arena.ai still serves social images",
+                "https://indexable.arena.ai/routes/x.jpg", true, null);
+        doc(cases, "dead blog host removed from the allow-list", "https://blog.arena.ai/",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        doc(cases, "dead news host removed from the allow-list", "https://news.arena.ai/",
+                false, BlockReason.HOST_NOT_ALLOWED);
+        doc(cases, "the live blog path is still reachable", "https://arena.ai/blog/connectors-in-agent-mode",
+                true, null);
+
         return cases;
     }
 

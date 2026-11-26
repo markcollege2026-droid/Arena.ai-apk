@@ -34,7 +34,13 @@ public final class PolicyResult {
         return new PolicyResult(true, null, canonicalHost, rawUrl, "", entry);
     }
 
-    static PolicyResult block(BlockReason reason, String canonicalHost, String rawUrl, String detail) {
+    /**
+     * Build a refusal. Public so that a caller that knows about a view-level restriction (a connector
+     * page is fine in the OAuth window but not in the main page) can hand back the same immutable
+     * result the policy engine produces.
+     */
+    public static PolicyResult block(BlockReason reason, String canonicalHost, String rawUrl,
+                                     String detail) {
         return new PolicyResult(false, reason, canonicalHost, rawUrl, detail, null);
     }
 

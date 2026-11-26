@@ -91,6 +91,21 @@ public final class PolicyConfig {
     }
 
     /**
+     * Evaluate a URL for the one and only main WebView. This is deliberately stricter than
+     * {@link #evaluateNavigation(String)}: connector provider pages are valid documents in the in-app
+     * OAuth window, but they must never replace the Arena.ai page the user is looking at. Every
+     * main-frame navigation hook, the final-URL watchdog and the history check use this method.
+     */
+    public PolicyResult evaluatePrimaryDocument(String rawUrl) {
+        PolicyResult result = evaluateNavigation(rawUrl);
+        if (result.isAllowed() && result.matchedEntry() != null && result.matchedEntry().isConnector()) {
+            return PolicyResult.block(BlockReason.CONNECTOR_WINDOW_ONLY, result.canonicalHost(), rawUrl,
+                    "connector pages belong to the in-app sign-in window");
+        }
+        return result;
+    }
+
+    /**
      * Evaluate a document that is rendered <em>inside</em> a page (iframe/frame/embed).
      *
      * <p>Kept separate from {@link #evaluateNavigation(String)} so that "may this replace what the user
@@ -137,6 +152,67 @@ public final class PolicyConfig {
         }
         AllowEntry entry = result.matchedEntry();
         return entry != null && entry.isProduct();
+    }
+
+    /**
+     * True when the URL is one step of a connector's OAuth hand-off (an authorize, login or consent
+     * page). Used by the pop-up router to decide that a window must stay alive: unlike an ordinary
+     * pop-up, the OAuth page talks to the page that opened it through {@code window.opener}/
+     * {@code postMessage}, which only works if this exact WebView survives.
+     */
+    public boolean isConnectorNavigation(String rawUrl) {
+        PolicyResult result = evaluateNavigation(rawUrl);
+        if (!result.isAllowed()) {
+            return false;
+        }
+        AllowEntry entry = result.matchedEntry();
+        return entry != null && entry.isConnector();
+    }
+
+    /**
+     * True for a first-party URL that can be an intermediate page of an OAuth hand-off opened in a
+     * pop-up (the site's sign-in/connector API routes, or an Arena page carrying OAuth parameters).
+     *
+     * <p>Arena opens a blank pop-up and only then writes the real hand-off URL into it. That URL is
+     * sometimes an Arena staging page before it is a provider login page. Keeping such a window alive
+     * for a short, bounded grace period is the least-invasive way to bridge that hop without giving
+     * arbitrary pop-ups a life of their own: the page is never shown until a sign-in/connector URL
+     * arrives, the normal single-WebView routing wins on timeout, and the main page remains strict.</p>
+     */
+    public boolean isHandoffStagingNavigation(String rawUrl) {
+        if (!isProductNavigation(rawUrl)) {
+            return false;
+        }
+        String lower = rawUrl.toLowerCase(Locale.ROOT);
+        int scheme = lower.indexOf("://");
+        if (scheme < 0) {
+            return false;
+        }
+        int authorityStart = scheme + 3;
+        int end = authorityStart;
+        while (end < lower.length() && lower.charAt(end) != '/'
+                && lower.charAt(end) != '?' && lower.charAt(end) != '#') {
+            end++;
+        }
+        String rest = end < lower.length() ? lower.substring(end) : "/";
+        String path = UrlPolicy.extractRawPath(rest);
+        int queryStart = rest.indexOf('?');
+        String query = "";
+        if (queryStart >= 0) {
+            int fragment = rest.indexOf('#', queryStart);
+            query = fragment < 0 ? rest.substring(queryStart + 1) : rest.substring(queryStart + 1, fragment);
+        }
+        String[] stagingPaths = {
+                "/nextjs-api/sign-in/", "/nextjs-api/sign-up/", "/api/connectors/",
+                "/api/coding/", "/oauth/", "/connector", "/connect"
+        };
+        for (String prefix : stagingPaths) {
+            if (path.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return query.contains("oauth") || query.contains("connector")
+                || query.contains("code=") || query.contains("state=");
     }
 
     /** Find the entry for a canonical host, or null. Exact match only; there is nothing to iterate. */
