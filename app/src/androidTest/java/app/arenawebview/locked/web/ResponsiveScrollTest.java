@@ -96,7 +96,7 @@ public class ResponsiveScrollTest {
                     public void onPageFinished(WebView webView, String url) {
                         client.injectSidebarGuard(webView);
                         webView.evaluateJavascript("""
-                                (function() {
+                                (function() { try {
                                   var doc = document.documentElement;
                                   var sidebar = document.getElementById('chat-list');
                                   var first = document.querySelector('[data-sidebar="group"]');
@@ -124,6 +124,7 @@ public class ResponsiveScrollTest {
                                     noOverlap ? 'no-overlap' : 'overlap',
                                     lastVisible ? 'last-visible' : 'last-cut'
                                   ].join('|');
+                                } catch (e) { return 'js-error:' + (e && e.message ? e.message : e); }
                                 })()
                                 """, value -> {
                             probe.set(value);
@@ -139,7 +140,7 @@ public class ResponsiveScrollTest {
         String result = probe.get();
         Log.i(TAG, "responsive probe: " + result);
         String[] parts = result.replace("\"", "").split("\\|");
-        assertEquals("nine measurements", 9, parts.length);
+        assertEquals("nine measurements from: " + result, 9, parts.length);
         assertTrue("page must be taller than the viewport: " + result,
                 Integer.parseInt(parts[2]) > Integer.parseInt(parts[3]));
         assertEquals("page must scroll all the way to the end: " + result, "page-bottom-ok", parts[4]);

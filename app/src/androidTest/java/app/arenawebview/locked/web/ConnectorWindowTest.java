@@ -37,6 +37,7 @@ public class ConnectorWindowTest {
         final RecordingGuardHost host = new RecordingGuardHost(POLICY);
         final WebView[] holder = new WebView[1];
         final boolean[] alive = new boolean[1];
+        final boolean[] sawCallback = new boolean[1];
         InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
@@ -62,6 +63,8 @@ public class ConnectorWindowTest {
                 assertFalse("the callback staging hop must stay in the same window",
                         client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.navigation(
                                 "https://arena.ai/api/connectors/github/callback?code=abc&state=xyz")));
+                sawCallback[0] = "https://arena.ai/api/connectors/github/callback?code=abc&state=xyz"
+                        .equals(host.lastSignInWindowNavigated);
                 assertFalse("the final provider/consent hop must stay in the same window",
                         client.shouldOverrideUrlLoading(popup, FakeWebResourceRequest.navigation(
                                 "https://github.com/login?client_id=arena")));
@@ -73,9 +76,7 @@ public class ConnectorWindowTest {
         assertEquals(1, host.metrics().count(PolicyMetrics.Counter.SIGN_IN_WINDOWS));
         assertEquals("the first visible URL must be the provider's authorize page",
                 "https://github.com/login/oauth/authorize?client_id=arena", host.lastSignInWindowUrl);
-        assertEquals("the return hop must be reported as a navigation of the same window",
-                "https://arena.ai/api/connectors/github/callback?code=abc&state=xyz",
-                host.lastSignInWindowNavigated);
+        assertTrue("the return hop must be reported as a navigation of the same window", sawCallback[0]);
         assertNull("a connector hand-off must never take over the main WebView", host.lastLoadedUrl);
         assertEquals(0, host.metrics().count(PolicyMetrics.Counter.ROUTED_POPUPS));
         assertTrue("the OAuth WebView must still be alive for window.opener", alive[0]);
@@ -137,7 +138,13 @@ public class ConnectorWindowTest {
                                 "https://api.github.com/user")));
             }
         });
-        assertEquals("https://github.com/login/oauth/authorize?client_id=arena", host.lastBlockedNavigation);
+        for (String url : new String[]{
+                "https://github.com/login/oauth/authorize?client_id=arena",
+                "https://app.notion.com/install-integration?client_id=arena",
+                "https://www.dropbox.com/oauth2/authorize?client_id=arena"}) {
+            assertTrue("main view must report the refusal: " + url,
+                    host.events().contains("navigation blocked " + url));
+        }
         assertNotNull(POLICY.evaluatePrimaryDocument("https://github.com/login/oauth/authorize"));
         assertEquals(BlockReason.CONNECTOR_WINDOW_ONLY,
                 POLICY.evaluatePrimaryDocument("https://github.com/login/oauth/authorize").reason());
