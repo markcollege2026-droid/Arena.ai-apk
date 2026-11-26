@@ -388,27 +388,7 @@ jobs:
           profile: pixel_5
           disable-animations: true
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
-          script: |
-            set -x
-            # The emulator runner wraps scripts with `set -e`; these probes need to record a failure
-            # rather than abort before the log and report are written.
-            set +e
-            mkdir -p docs/evidence/responsive
-            adb shell wm size ${{ matrix.screen }} 2>&1 | tee docs/evidence/responsive/wm-size.txt
-            adb shell wm density 320 2>&1 | tee docs/evidence/responsive/wm-density.txt
-            adb shell settings put system accelerometer_rotation 0
-            adb shell settings put system user_rotation 0
-            adb logcat -c || true
-            set -o pipefail
-            ./gradlew --no-daemon :app:connectedDebugAndroidTest \
-              --tests 'app.arenawebview.locked.web.ResponsiveScrollTest' --stacktrace \
-              2>&1 | tee docs/evidence/responsive/gradle-${{ matrix.screen }}.log
-            GRADLE_EXIT="${PIPESTATUS[0]}"
-            adb logcat -d -s ArenaWebViewLocked:V > docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
-            echo "=== responsive probe at ${{ matrix.screen }} ==="
-            grep 'responsive probe' docs/evidence/responsive/logcat-${{ matrix.screen }}.txt || true
-            test "$GRADLE_EXIT" = 0
-
+          script: bash scripts/responsive-probe.sh ${{ matrix.screen }}
       - name: Publish responsive probe as an annotation
         if: always()
         shell: bash
