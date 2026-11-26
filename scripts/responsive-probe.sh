@@ -14,8 +14,8 @@ adb shell settings put system user_rotation 0
 adb logcat -c || true
 set -o pipefail
 ./gradlew --no-daemon :app:connectedDebugAndroidTest \
-  --tests 'app.arenawebview.locked.web.ResponsiveScrollTest' --stacktrace \
-  2>&1 | tee "$EVIDENCE/gradle-$SCREEN.log"
+  -Pandroid.testInstrumentationRunnerArguments.class=app.arenawebview.locked.web.ResponsiveScrollTest \
+  --stacktrace 2>&1 | tee "$EVIDENCE/gradle-$SCREEN.log"
 GRADLE_EXIT="${PIPESTATUS[0]}"
 adb logcat -d -s ArenaWebViewLocked:V > "$EVIDENCE/logcat-$SCREEN.txt" || true
 echo "=== responsive probe at $SCREEN ==="
