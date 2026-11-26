@@ -21,3 +21,6 @@ screenshots/
 
 # NOTE: gradle/wrapper/gradle-wrapper.jar IS committed (it is required to build), and so is the
 # demo signing keystore in keystore/. Neither is ignored on purpose.
+
+# Local scratch/evidence from gh CLI (never commit)
+.arena/

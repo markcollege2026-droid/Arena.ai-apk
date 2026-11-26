@@ -55,7 +55,45 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Run unit tests
-        run: ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace 2>&1 | tee /tmp/unit-tests.log
+
+      - name: Annotate unit test failures
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, xml.etree.ElementTree as ET
+          def esc(msg):
+              return msg.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          def trim(text, limit=1800):
+              text = (text or '').strip()
+              return text if len(text) <= limit else text[-limit:]
+          total = failures = 0
+          for path in sorted(glob.glob('app/build/test-results/testDebugUnitTest/*.xml')):
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError:
+                  continue
+              for case in root.iter('testcase'):
+                  total += 1
+                  problem = case.find('failure') or case.find('error')
+                  if problem is None:
+                      continue
+                  failures += 1
+                  if failures <= 12:
+                      message = (problem.get('message') or '') + '\n' + (problem.text or '')
+                      title = case.get('classname', '?').split('.')[-1] + '.' + case.get('name', '?')
+                      print(f'::error title={esc(title)}::{esc(trim(message))}')
+          print(f'::notice title=Unit tests::{total} cases reported, {failures} failed')
+          if total == 0 and os.path.exists('/tmp/unit-tests.log'):
+              log = open('/tmp/unit-tests.log', errors='replace').read()
+              lines = [l for l in log.splitlines()
+                       if re.search(r'error:|FAILED|What went wrong|Exception|Could not|Test failed', l)]
+              print('::error title=Unit tests did not report any cases::'
+                    + esc(trim('\n'.join(lines[-50:]) or log)))
+          PY
 
       - name: Publish unit test results
         if: always()
