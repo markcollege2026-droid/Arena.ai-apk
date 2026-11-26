@@ -383,9 +383,12 @@ jobs:
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
           script: |
             set -x
+            # The emulator runner wraps scripts with `set -e`; these probes need to record a failure
+            # rather than abort before the log and report are written.
+            set +e
             mkdir -p docs/evidence/responsive
-            adb shell wm size ${{ matrix.screen }}
-            adb shell wm density 320
+            adb shell wm size ${{ matrix.screen }} 2>&1 | tee docs/evidence/responsive/wm-size.txt
+            adb shell wm density 320 2>&1 | tee docs/evidence/responsive/wm-density.txt
             adb shell settings put system accelerometer_rotation 0
             adb shell settings put system user_rotation 0
             adb logcat -c || true
