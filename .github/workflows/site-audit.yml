@@ -143,6 +143,10 @@ jobs:
           grep -hioE '.{0,160}(window\.open|/api/connectors|/api/coding|authorizeUrl|authorization_url|authUrl|oauth_url|redirect_uri|/oauth/[a-z_-]+).{0,200}' \
             docs/evidence/site-audit/scripts/*.js 2>/dev/null \
             | sort -u | head -n 300 > docs/evidence/site-audit/scripts/hits-oauth.txt || true
+          # API route literals reveal which first-party endpoint serves the OAuth popup URL.
+          grep -hoE '"/[A-Za-z0-9_./?=&-]{4,120}"' docs/evidence/site-audit/scripts/*.js 2>/dev/null \
+            | sort -u | grep -Ei 'api|oauth|auth|connect|sign|callback' \
+            | head -n 300 > docs/evidence/site-audit/scripts/api-routes.txt || true
           printf 'scripts discovered: %s, fetched: %s\n' \
             "$(wc -l < docs/evidence/site-audit/scripts/index.txt)" \
             "$(wc -l < docs/evidence/site-audit/scripts/index.resolved.tsv)" \
@@ -177,6 +181,11 @@ jobs:
             echo '```text'
             cat docs/evidence/site-audit/scripts/hits-oauth.txt || true
             echo '```'
+            echo
+            echo '## First-party API route literals'
+            echo '```text'
+            cat docs/evidence/site-audit/scripts/api-routes.txt || true
+            echo '```'
           } > docs/evidence/site-audit/site-audit.md
           cat docs/evidence/site-audit/site-audit.md
 
@@ -188,7 +197,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add docs/evidence/site-audit/site-audit.md docs/evidence/site-audit/scripts/hits.txt \
-            docs/evidence/site-audit/scripts/hits-oauth.txt
+            docs/evidence/site-audit/scripts/hits-oauth.txt docs/evidence/site-audit/scripts/api-routes.txt
           if git diff --cached --quiet; then
             echo 'No change to the derived audit report.'
             exit 0
