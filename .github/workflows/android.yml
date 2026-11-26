@@ -87,12 +87,14 @@ jobs:
                       title = case.get('classname', '?').split('.')[-1] + '.' + case.get('name', '?')
                       print(f'::error title={esc(title)}::{esc(trim(message))}')
           print(f'::notice title=Unit tests::{total} cases reported, {failures} failed')
-          if total == 0 and os.path.exists('/tmp/unit-tests.log'):
+          if os.path.exists('/tmp/unit-tests.log'):
               log = open('/tmp/unit-tests.log', errors='replace').read()
               lines = [l for l in log.splitlines()
-                       if re.search(r'error:|FAILED|What went wrong|Exception|Could not|Test failed', l)]
-              print('::error title=Unit tests did not report any cases::'
-                    + esc(trim('\n'.join(lines[-50:]) or log)))
+                       if re.search(r'error:|FAILED|What went wrong|Exception|Could not|Test failed|'
+                                    r'Execution failed|BUILD FAILED|FAILURE:', l)]
+              title = ('Unit tests did not report any cases' if total == 0
+                       else 'Gradle failed with no failing test cases')
+              print(f'::error title={title}::{esc(trim(chr(10).join(lines[-60:]) or log))}')
           PY
 
       - name: Publish unit test results
