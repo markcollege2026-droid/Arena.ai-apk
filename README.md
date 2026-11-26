@@ -7,14 +7,55 @@ UI, and it does not touch Arena.ai's authentication, CAPTCHA or access rules.
 **Installable APK:** [Releases page](https://github.com/markcollege2026-droid/Arena.ai-apk/releases) -
 or download the `arena-webview-apk` artifact from the [Actions runs](https://github.com/markcollege2026-droid/Arena.ai-apk/actions).
 
-**Package:** `app.arenawebview.locked` · **versionName:** 1.3.1 · **minSdk:** 24 (Android 7.0) ·
+**Package:** `app.arenawebview.locked` · **versionName:** 1.4.0 (`versionCode 6`) · **minSdk:** 24 (Android 7.0) ·
 **targetSdk:** 35 · **permissions:** `INTERNET`, `ACCESS_NETWORK_STATE` only.
 
 > Read [SECURITY.md](SECURITY.md) for the threat model and an honest list of what a WebView wrapper
 > *cannot* police. Read [TEST_REPORT.md](TEST_REPORT.md) for what has actually been executed and
 > measured, and [docs/EVIDENCE.md](docs/EVIDENCE.md) for the raw CI output.
 
-**What is new in 1.3.1 / 1.3.0:**
+**What is new in 1.4.0 - Agent Mode connectors and a measured responsive page:**
+
+* **Connector OAuth hand-offs work inside the app.** The live site audit (see
+  [docs/evidence/site-audit/site-audit.md](docs/evidence/site-audit/site-audit.md) and the official
+  Arena blog/help articles) found that Agent Mode can connect GitHub, Notion, Linear, Supabase, Vercel,
+  Dropbox and Google Workspace. 1.4.0 adds a narrow `Role.CONNECTOR` policy class with exact host **and
+  path** pins for `github.com/login/oauth/authorize` + `/login`, `api.notion.com/v1/oauth/authorize`,
+  `app.notion.com/install-integration`, `www.notion.so/login` + `/logout`, `linear.app/oauth/authorize`
+  + `/login`, `api.supabase.com/v1/oauth/authorize`, `supabase.com/login`,
+  `vercel.com/oauth/authorize` + `/login`, `www.dropbox.com/oauth2/authorize` +
+  `/oauth2/authorize_error` + `/login`. Google's existing `accounts.google.com` sign-in entry covers
+  the Workspace/Google connector hand-off. These pages may be shown **only** in the one in-app OAuth
+  window; the main WebView refuses them with `CONNECTOR_WINDOW_ONLY`. The pop-up WebView now survives
+  the provider login/consent page, Arena's staging/callback hop and the next provider step, so
+  `window.opener`/`postMessage` can complete the flow. A first-party staging URL in a blank pop-up is
+  held hidden for at most **8 seconds**; if no OAuth URL arrives, ordinary single-WebView routing wins.
+  Provider assets (for example `github.githubassets.com`) stay resource-only.
+* **Site audit refreshed from live pages.** `blog.arena.ai` and `news.arena.ai` were removed (both
+  return 522; the blog lives at `arena.ai/blog`). `auth.`, `cdn.` and `indexable.arena.ai` are
+  resource-only endpoints (document roots return 404) rather than page-capable hosts. `www.`,
+  `agent.` and `code.arena.ai` redirect to the canonical product pages. Terms and privacy links land
+  on `help.arena.ai`, which remains page-capable. The domain/trust-anchor configuration in
+  `network_security_config.xml` was aligned with the audited hosts.
+* **Responsive page verified on three screen sizes.** A new `ResponsiveScrollTest` measures the real
+  document and sidebar scroll offsets with JavaScript in a real WebView. CI runs it at 720x1280,
+  1280x720 and 800x1280. All three report `page-bottom-ok`, `sidebar-scrollable`,
+  `sidebar-bottom-ok`, `no-overlap` and `last-visible` - the enlarged Agent Mode page and the last
+  conversation are reachable without guessing, on portrait and landscape screens.
+* **Security posture is unchanged at the network layer.** Cleartext HTTP, non-443 ports, IP literals,
+  `localhost`, userinfo and trailing-dot/non-ASCII hosts remain refused, all WebView traffic still
+  goes through the loopback `CONNECT` egress guard, sub-resource HTTPS requests can still reach any
+  canonical backend host, and the system-CA-only TLS policy has no debug override.
+
+**Limits you should know about:** consent screens must be served from the exact reviewed paths - an
+unreviewed path on a provider host is refused and closes only that OAuth window. A successful live
+login needs a real Arena account, a real provider account, the provider's consent page, network
+access to the pinned hosts and Arena being available (the runner is often challenged by Cloudflare).
+CI proves routing/policy and page rendering; it does **not** prove a human's credentials or a
+provider's live consent screen. See [SECURITY.md](SECURITY.md), [TEST_REPORT.md](TEST_REPORT.md) and
+[docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md) for the threat model, exact results and limitations.
+
+**1.3.1 / 1.3.0 background:**
 * **Left-sidebar promo removal & small-screen scrollability (`1.3.1`):** Automatically dismisses and
   hides left-sidebar promotional/callout cards (such as `"Try Agent Mode"` banners and YouTube video
   promos) via a `MutationObserver` + scoped CSS injected in `ArenaWebViewClient`, while preserving
@@ -76,13 +117,14 @@ sideloading and for CI verification, and it is not a production signing key.** S
 
 ### Continuous integration
 
-`.github/workflows/android.yml` runs four jobs on every push and pull request:
+`.github/workflows/android.yml` runs four jobs on every push and pull request, plus a three-size responsive matrix:
 
 | Job | What it does |
 | --- | --- |
-| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (2420 tests, including a seeded 120,000-evaluation URL fuzz and the egress proxy on real loopback sockets) |
+| `unit-tests` | Verifies the Gradle wrapper jar against a pinned SHA-256, then runs the JVM suite (including a seeded 120,000-evaluation URL fuzz, the egress proxy on real loopback sockets and the connector policy pins) |
 | `build-apk` | Builds debug + release APKs, runs `aapt2 dump badging` assertions, writes `APK-SHA256SUMS.txt` |
 | `instrumented-tests` | Boots an API 34 emulator and runs `connectedDebugAndroidTest` (the live-site smoke test is skipped if the runner has no network path to arena.ai) |
+| `responsive-tests` | Boots three API 34 emulators at 720x1280, 1280x720 and 800x1280 and measures full document + sidebar scrollability with `ResponsiveScrollTest`; failures are reported as check annotations and the probe/logcat/Gradle output is uploaded |
 | `release` | On a `v*` tag: publishes a GitHub Release with both APKs, checksums, badging output and release notes |
 
 ---
@@ -108,8 +150,8 @@ configuration that could be swapped out at runtime.
 | 9 | Every refusal is named in the log | One logcat line per distinct refused destination - reason, host and path, never the query string. A page that half-works is diagnosable instead of mysterious |
 | 10 | Service worker traffic is checked | `ServiceWorkerController` client applies the same policy |
 | 11 | Pop-ups are captured, never shown | `window.open`/`target="_blank"` is intercepted; an allowed URL is routed into the single visible WebView, anything else is refused |
-| 12 | The only second window is the sign-in window | Google sign-in is an OAuth *pop-up* flow: the page that opened it receives the result through `window.opener`, so that one window has to stay alive. It is a plain child view of the same activity (never a second activity, never a system browser, never a Custom Tab), it can always be closed by the user, and the guard destroys it when the flow ends (`window.close()`), when a post-auth redirect lands back on the root `https://arena.ai/` page, when the user closes it, when back is pressed, when the activity is destroyed, or when the watchdog sees it off-policy |
-| 13 | The sign-in window is fenced to the hand-off | Inside it, only Google's sign-in pages (`accounts.google.com`) and the return hop to an Arena.ai page are displayable. Every other URL - a third party, a look-alike, or an asset-only host such as `ssl.gstatic.com` - is refused and the window is torn down |
+| 12 | The only second window is the in-app sign-in/OAuth window | Google sign-in and Agent Mode connector hand-offs are OAuth *pop-up* flows: the page that opened them receives the result through `window.opener`, so that one window has to stay alive across the provider and Arena hops. It is a plain child view of the same activity (never a second activity, never a system browser, never a Custom Tab), it can always be closed by the user, and the guard destroys it when the flow ends (`window.close()`), when a post-auth redirect lands back on the root `https://arena.ai/` page, when the user closes it, when back is pressed, when the activity is destroyed, or when the watchdog sees it off-policy |
+| 13 | The sign-in window is fenced to the hand-off | Inside it, only Google's sign-in pages (`accounts.google.com`), the exact-pinned connector OAuth pages of the reviewed providers and the return hop to an Arena.ai page are displayable. Every other URL - a third party, a look-alike, an unreviewed provider path, or an asset-only host such as `ssl.gstatic.com` - is refused and the window is torn down |
 | 14 | CAPTCHAs are shown, never solved | The reCAPTCHA/Turnstile widget hosts are path-scoped *asset* entries, so a challenge renders inside the arena.ai page and the user answers it. The wrapper never reads, pre-answers, automates or bypasses a challenge, and there is no JavaScript bridge through which it could |
 | 15 | Sign-in never leaves the app | No `ACTION_VIEW`, no `androidx.browser`/Custom Tab, no chooser, no external `startActivity` - `signInNeverLeavesTheApp` fails the build if any of those appears in the sources |
 | 16 | External apps & browsers are unreachable | Public `startActivity`/`startActivityForResult`/`startActivities` overrides refuse all external intents (`ACTION_VIEW`, `ACTION_SEND`, `tel:`, `mailto:`, `market://`, browser launches), incoming intents are only logged, and off-policy custom schemes never reach the platform |
@@ -129,20 +171,25 @@ a refusal plus an in-app explanation, never in a load.
 ### What is allow-listed
 
 `arena.ai` and `www.arena.ai` are the product. The remaining first-party hosts are the ones Arena.ai
-operates for its own assets and links: `auth.`, `cdn.`, `agent.`, `code.`, `indexable.`, `blog.`,
-`news.`, `help.`, `status.` and `trust.arena.ai`. Mail, SSO (`okta.`), e-mail security (`mta-sts.`)
-and non-production preview hosts (`*.preview.arena.ai`) are deliberately **not** listed.
+operates for its own assets and links: `auth.`, `cdn.`, `agent.`, `code.`, `indexable.`, `help.`,
+`status.` and `trust.arena.ai`. `www.`, `agent.` and `code.` redirect to the canonical pages;
+`auth.`, `cdn.` and `indexable.` are **resource-only endpoints** (their document roots return 404).
+`blog.arena.ai` and `news.arena.ai` were removed after the live audit (both return 522; the blog is
+`arena.ai/blog`). Mail, SSO (`okta.`), e-mail security (`mta-sts.`) and non-production preview hosts
+(`*.preview.arena.ai`) are deliberately **not** listed.
 
-**Sign-in and CAPTCHA hosts (enabled in this build).** Arena.ai lets you create an account and sign in
-**with a Google account** ("Continue with Google"), and it sits behind Cloudflare, so a CAPTCHA can
-appear. Both capabilities need hosts outside arena.ai, and both are allow-listed as narrowly as the
-flows tolerate:
+**Sign-in, connector and CAPTCHA hosts (enabled in this build).** Arena.ai lets you create an account
+and sign in **with a Google account** ("Continue with Google"), Agent Mode can connect external apps,
+and the site sits behind Cloudflare, so a CAPTCHA can appear. Each capability is allow-listed as
+narrowly as its flow tolerates:
 
-* `accounts.google.com` is the **only** third-party host that may ever become a visible page
-  (`Role.SIGN_IN`). It normally appears in the in-app sign-in window (the OAuth pop-up); if Arena.ai
-  navigates the main view there instead (a redirect-based flow), that is allowed too, and the same
-  path-free entry applies in both places. Google's OAuth pages live at many paths under that one host,
-  so it is listed without a path restriction. No other Google host can ever become a page.
+* `accounts.google.com` is the Google sign-in host (`Role.SIGN_IN`). It normally appears in the in-app
+  sign-in window (the OAuth pop-up); if Arena.ai navigates the main view there instead (a
+  redirect-based flow), that is allowed too. Google's OAuth pages live at many paths under that one
+  host, so it is listed without a path restriction. No other Google host can ever become a page.
+* Connector provider pages are `Role.CONNECTOR`: exact host **and exact path** entries for the OAuth
+  authorize/login/consent URLs listed in the 1.4.0 section above. They can only be displayed in the
+  in-app OAuth window, never in the main WebView (`CONNECTOR_WINDOW_ONLY`) and never in a system browser.
 * Everything else Google needs is an **asset-only** entry (`Role.ASSET`: it can be fetched and embedded
   in an iframe, and the app is never navigated to it). These are path-pinned, with **two reviewed
   exceptions**: `ssl.gstatic.com` and `www.gstatic.com` are unrestricted because Google serves its whole
@@ -156,18 +203,20 @@ flows tolerate:
   `/turnstile/` and `/cdn-cgi/challenge-platform/` (the frame Cloudflare's own documentation shows the
   widget rendering in).
 
-Gmail, Drive, Docs, Play, `googleapis.com`, other `googleusercontent.com` hosts, Google Search outside
-`/recaptcha/`, and every other third party remain unreachable **as pages or embedded frames (`DOCUMENT` /
-`SUBDOCUMENT`)** - they are not in `ArenaAllowlist`, so the user can never browse to them or have them
-take over the screen. Outbound HTTPS sub-resource requests (`SUBRESOURCE`) and port-443 `CONNECT` tunnels
-are permitted to valid canonical DNS hosts so Arena.ai's backend APIs, CDNs, WebSockets, uploads, and
-downloads work without restriction.
+Google Search outside `/recaptcha/`, social sites, and every other third party remain unreachable
+**as pages or embedded frames (`DOCUMENT` / `SUBDOCUMENT`)** - they are not in `ArenaAllowlist`, so the
+user can never browse to them or have them take over the screen. Connector providers' own API domains
+(for example `api.github.com`) are reachable as sub-resources/backends but never as pages. Outbound
+HTTPS sub-resource requests (`SUBRESOURCE`) and port-443 `CONNECT` tunnels are permitted to valid
+canonical DNS hosts so Arena.ai's backend APIs, CDNs, WebSockets, uploads, and downloads work without
+restriction.
 
 The wrapper **never solves, pre-answers, automates or bypasses a CAPTCHA**, and it never reads, stores
 or transmits a credential: it has no JavaScript bridge, and it renders whatever challenge the site
-sends for the user to answer. The two switches are `ArenaAllowlist.ENABLE_GOOGLE_SIGN_IN` and
-`ArenaAllowlist.ENABLE_CAPTCHA_WIDGETS`; setting either to `false` removes those hosts entirely and the
-`unit-tests` job pins the exact resulting host list (see SECURITY.md §5).
+sends for the user to answer. The three switches are `ArenaAllowlist.ENABLE_GOOGLE_SIGN_IN`,
+`ArenaAllowlist.ENABLE_CAPTCHA_WIDGETS` and `ArenaAllowlist.ENABLE_AGENT_CONNECTORS`; setting any of
+them to `false` removes those hosts entirely and the `unit-tests` job pins the exact resulting host list
+(see SECURITY.md §5).
 
 ### Reloading a page
 
@@ -251,7 +300,7 @@ app/src/main/java/app/arenawebview/locked/
     EgressGuard.java           starts the proxy and pins the WebView to it (ProxyController), fail-closed
     ArenaWebViewClient.java    navigation/request interception
     ArenaWebChromeClient.java  pop-ups, dialogs, permissions, fullscreen
-    PopupRouterClient.java     hidden pop-up window: routed, refused, or promoted to the sign-in window
+    PopupRouterClient.java     pop-up window: routed to the main view, refused, or promoted to the Google/connector OAuth window
     GuardHost.java             the callbacks the activity implements
     BaseGuardHost.java         no-op base for tests
     BlockedResponses.java      the in-process 403 response
@@ -260,7 +309,9 @@ app/src/main/java/app/arenawebview/locked/
   ui/AuthWindow.java           in-app sign-in window (a view, not an activity)
 app/src/test/                  JVM tests: URL policy table (292 cases in this configuration) + seeded fuzz + invariants + the egress proxy on real loopback sockets
 app/src/androidTest/           emulator tests (guards, escapes, live smoke)
-.github/workflows/android.yml  CI: tests, APK build + verification, release
+.github/workflows/android.yml  CI: tests, responsive matrix, APK build + verification, release
+.github/workflows/site-audit.yml  Actions-only live-site audit that produced docs/evidence/site-audit/
+scripts/responsive-probe.sh  single-command WebView scrollability probe run by the emulator runner
 docs/                          evidence, release notes
 keystore/                      demo signing key + guidance
 SECURITY.md                    threat model, guarantees, limitations

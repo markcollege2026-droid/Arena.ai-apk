@@ -1,3 +1,62 @@
+# Release notes - Arena WebView (Locked) 1.4.0
+
+Sixth build (`versionCode 6`, `versionName 1.4.0`). This release is based on a fresh, Actions-only
+audit of the live site and its linked help/blog pages. It adds Agent Mode connector OAuth hand-offs
+in the existing in-app window, updates the host/pin set to the audited state, and measures that the
+enlarged Agent Mode page and its sidebar remain fully scrollable at three screen sizes.
+
+## What is new in 1.4.0
+
+* **Re-audited site set.** Main root, `/agent`, `/code`, `/history/search`, the changelog, `/about`,
+  `/blog`, blog posts, `/cms/` (redirect), `www.`, `agent.` and `code.` still resolve to the expected
+  first-party pages. Terms and privacy redirect to `help.arena.ai`, which remains reachable.
+  `auth.`, `cdn.` and `indexable.arena.ai` serve resources but their document roots return 404, so
+  they were moved to `Role.RESOURCE` (sub-resources/subdocuments only). `blog.arena.ai` and
+  `news.arena.ai` were removed: both return 522 and the site links the blog at `arena.ai/blog`.
+* **Agent Mode connectors.** Official documentation and the 2026-10-27 Arena blog post list GitHub,
+  Notion, Linear, Supabase, Vercel, Dropbox and Google Workspace (Drive/Docs/Sheets/Slides, Gmail,
+  Calendar). 1.4.0 adds `Role.CONNECTOR` entries with exact paths for the OAuth authorize/login/consent
+  URLs that the CI audit confirmed on the live providers, plus provider assets as resource-only.
+  Google Workspace continues through the existing `accounts.google.com` entry. Connector hand-offs are
+  kept in the single in-app OAuth window across provider login, Arena staging/callback and follow-up
+  provider pages, so `window.opener`/`postMessage` can complete. The main WebView rejects connector
+  pages (`CONNECTOR_WINDOW_ONLY`). An Arena staging URL in a blank pop-up gets at most 8 seconds of
+  hidden grace; otherwise the normal one-WebView routing wins.
+* **Security impact and sandbox preservation.** No system browser, Custom Tab or external `startActivity`
+  was added. The egress guard, HTTPS-only rule, port-443-only tunnels, system-CA-only TLS config,
+  Safe Browsing, hardened WebView settings, CAPTCHA non-bypass and no-JavaScript-bridge invariants are
+  unchanged. The exception is *which URLs may be displayed in the one OAuth window*: exact connector
+  pages are added there and nowhere else. `network_security_config.xml` mirrors the audited hosts.
+* **Responsive verification.** `ResponsiveScrollTest` runs in CI at 720x1280, 1280x720 and 800x1280.
+  Every run reported `page-bottom-ok`, `sidebar-scrollable`, `sidebar-bottom-ok`, `no-overlap` and
+  `last-visible`: the 2400px page scrolls to its end and the last of ten sidebar conversations is
+  reachable; promo cards do not overlap thread groups. The workflow annotations and uploaded evidence
+  contain the raw probe, logcat and Gradle output for each size.
+* **Validation.** Actions run
+  [45869528987](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45869528987):
+  2801 JVM tests, 62 instrumented tests and all three responsive jobs passed with 0 failures. The
+  shipped release APK is `versionCode 6` / `versionName 1.4.0`, targetSdk 35, with only `INTERNET`
+  and `ACCESS_NETWORK_STATE`; sha256
+  `e5ef275ff6c059cd1c313f0ef4be49f75a539bc010587b76108cf7fec50e068b`.
+
+## Known limitations / external requirements
+
+* A real connection still needs a logged-in Arena account, a provider account, the provider's live
+  consent screen, per-turn connector opt-in in Arena and network access to the pinned hosts. CI
+  verifies routing, policy and rendering with synthetic OAuth URLs; it cannot type a user's password
+  or approve a real consent screen.
+* Only the exact audited OAuth paths are displayable. A provider that changes its authorize/login
+  path, adds a new domain, or requires an unreviewed interstitial will be refused; update the allow-list
+  deliberately after a new audit.
+* Some Arena pages are protected by Cloudflare verification and the CI runner receives HTTP 403 on
+  `/leaderboard`; live sign-in probes depend on Google/Cloudflare serving a form to an embedded WebView.
+  This app does not solve or bypass those challenges - the user does.
+* Connected services' own APIs are reached as generic HTTPS sub-resources/`CONNECT` tunnels; their
+  *pages* are confined to the OAuth window, so a connector that tries to open its full web app as a
+  page will be refused by design.
+
+---
+
 # Release notes - Arena WebView (Locked) 1.3.1
 
 Fifth build (`versionCode 5`, `versionName 1.3.1`). It adds automatic removal of left-sidebar promotional

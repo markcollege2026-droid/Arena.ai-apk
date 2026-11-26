@@ -1,5 +1,54 @@
 # Test report
 
+## 1.4.0 - Agent Mode connectors, live site audit and responsive pages
+
+**Authoritative run:** [45869528987](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45869528987)
+on `arena/c47799c2-arena-ai-apk` (pushed HEAD `67fe066`), every job green. All work and all validation
+were done through GitHub Actions; no local build was used as a substitute.
+
+| Suite | Where | Result |
+| --- | --- | --- |
+| Security core, URL/egress fuzz, connector policy pins | JVM, JDK 17 (`unit-tests`) | **2801 test cases, 0 failed** (`JVM suite` check annotation) |
+| APK build and shipped-APK inspection | `build-apk` | release `versionCode 6`, `versionName 1.4.0`, targetSdk 35, launcher activity present, only `INTERNET` + `ACCESS_NETWORK_STATE`, not debuggable; sha256 `e5ef275ff6c059cd1c313f0ef4be49f75a539bc010587b76108cf7fec50e068b` (release), `c0cde77d2807a5e83545a9fbdd1743a8b485270600c94879e38ce37b13851b71` (debug) |
+| Guards on a real WebView | API 34 emulator (`instrumented-tests`) | **62 test cases, 0 failed**, including `ConnectorWindowTest` (all eight provider hand-offs open the one OAuth window, main view refuses provider pages, staging hop stays in the window, unreviewed provider path closes it) |
+| Scrollability | API 34 emulator, three sizes (`responsive-tests`) | **3/3 passed**, one `ResponsiveScrollTest` per size; probe printed in check annotations and uploaded as evidence |
+| Live site audit | `site-audit.yml`, [45867025369](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45867025369) | 60 scripts fetched; current first-party, help, terms/privacy and provider OAuth endpoints recorded in `docs/evidence/site-audit/site-audit.md` |
+
+### What the responsive probe measured
+
+Each run injects the app's own sidebar guard into a real WebView holding a 2400px-tall Agent-Mode-like
+page with ten conversations, then scrolls both the document and the sidebar to their bottoms. The
+nine comma/pipe-separated measurements are logged with the tag `ArenaWebViewLocked`:
+
+| Screen (wm size) | JS viewport | Document scrollHeight / clientHeight | Result |
+| --- | --- | --- | --- |
+| 720x1280 | 360x616 | 2788 / 616 | `page-bottom-ok`, `sidebar-scrollable`, `sidebar-bottom-ok`, `no-overlap`, `last-visible` |
+| 1280x720 | 640x315 | 2719 / 315 | `page-bottom-ok`, `sidebar-scrollable`, `sidebar-bottom-ok`, `no-overlap`, `last-visible` |
+| 800x1280 | 400x616 | 2788 / 616 | `page-bottom-ok`, `sidebar-scrollable`, `sidebar-bottom-ok`, `no-overlap`, `last-visible` |
+
+This is the enlarged page the user asked about: the document scrolls to the end, the sidebar has its own
+working scrollbar, the last of ten conversations is visible after scrolling, and the promo card no longer
+overlaps the first thread group. Earlier responsive jobs never executed their Gradle command because
+`reactivecircus/android-emulator-runner` runs each line of `script:` in a separate shell; the probe now
+lives in `scripts/responsive-probe.sh` and is invoked as one command. That was a CI harness fix, not a
+change to the app's layout logic.
+
+### What was and was not proven about connectors
+
+Proven: the policy accepts only the exact audited OAuth paths; provider pages are refused by the main
+WebView with `CONNECTOR_WINDOW_ONLY`; one pop-up WebView survives provider login -> Arena staging ->
+callback -> provider login; an unreviewed path on a provider host is blocked; all eight provider/Google
+hand-off URLs promote the in-app window; and the provider/Google sign-in page is *not* routed into the
+main view. The device log also shows the live Google sign-in form loading and a real CAPTCHA script
+being fetched through the egress guard.
+
+Not proven by CI: an end-to-end human login with real credentials and provider consent, the availability
+of Arena's connector API at the moment of use, per-turn connector opt-in, and provider-provided content
+after consent. The runner cannot complete those steps, and Cloudflare verification returns 403 for some
+live pages. See `docs/RELEASE_NOTES.md` §1.4.0 and `SECURITY.md` §5 for the full limitations.
+
+---
+
 ## 1.2.0 (unreleased) - egress guard, in-app reload: what the CI run showed
 
 Run [38484542679](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/38484542679) on

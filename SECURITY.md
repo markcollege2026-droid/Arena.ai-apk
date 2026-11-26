@@ -15,20 +15,29 @@ ad/tracker blocking beyond refusing hosts that are not Arena AI), not a sandbox 
 *arena.ai* (the site is trusted to the extent that it is the site the user asked for), and not a defence
 against a rooted/compromised device or a malicious WebView build.
 
-**Sign-in and CAPTCHA (1.1.0).** Arena AI offers sign-in with a Google account, so this build allows
-Google's account host for exactly that flow, and it allows the reCAPTCHA/Turnstile *widget assets* so a
-challenge can be displayed and answered by the user. The app does not touch authentication beyond
-deciding which hosts may take part: it never reads, stores or transmits a credential, never answers or
-bypasses a CAPTCHA, never automates a consent screen, and has no JavaScript bridge through which it
-could do any of those. Google itself may refuse to serve its sign-in form to an embedded browser - that
-is Google's server-side policy and this app does not work around it (README §3, limitation 5).
+**Sign-in, connectors and CAPTCHA (1.1.0-1.4.0).** Arena AI offers sign-in with a Google account and
+Agent Mode can connect external apps, so this build allows Google's account host and the *exact audited
+OAuth paths* of a small set of providers in one in-app window. It allows the reCAPTCHA/Turnstile
+*widget assets* so a challenge can be displayed and answered by the user. The app does not touch
+authentication beyond deciding which hosts may take part: it never reads, stores or transmits a
+credential, never answers or bypasses a CAPTCHA, never automates a consent screen, and has no
+JavaScript bridge through which it could do any of those. Google itself may refuse to serve its sign-in
+form to an embedded browser - that is Google's server-side policy and this app does not work around it
+(§4, item 5).
+
+**Agent Mode connectors (1.4.0) are a narrow, surface-scoped exception.** Provider pages are displayed
+only in the existing in-app OAuth window, only at audited paths, and never in the main WebView, a system
+browser or a Custom Tab. No egress, TLS, cleartext or external-intent protection was relaxed to make
+them work: the only change is that `Role.CONNECTOR` URLs are accepted as documents in that one window.
 
 ## 2. Trust model
 
 | Component | Trusted? | Notes |
 | --- | --- | --- |
 | `arena.ai` and the first-party hosts in the allow-list | yes, as the site the user asked for | TLS with system trust anchors only |
-| `accounts.google.com` (sign-in pages) and the Google/Cloudflare widget hosts (assets only) | as much as any third party is ever trusted | reachable only as far as the two capability switches allow; the only third-party *page* is Google's account host, and only inside the in-app sign-in window |
+| `accounts.google.com` (sign-in pages) | as much as any third party is ever trusted | reachable only while `ENABLE_GOOGLE_SIGN_IN` is on; it may appear in the in-app window or, for redirect-based sign-in, the main view |
+| Exact-pinned provider OAuth pages (`Role.CONNECTOR`) | as much as any third party is ever trusted | reachable only while `ENABLE_AGENT_CONNECTORS` is on, only at the audited authorize/login/consent paths, only in the single in-app OAuth window; provider assets remain resource-only |
+| Google/Cloudflare widget hosts (assets only) | as much as any third party is ever trusted | sub-resources/frames only, never pages; controlled by `ENABLE_CAPTCHA_WIDGETS` |
 | Android WebView (Chromium) | yes | kept up to date by the Play Store, not bundled by this app; Safe Browsing enabled |
 | The user's network | no | HTTPS only, no user CAs trusted, no cleartext fallback |
 | Everything else on the network | no | unreachable by policy; requests are refused before they are sent |
@@ -44,7 +53,10 @@ is Google's server-side policy and this app does not work around it (README §3,
 | Redirect hops are refused | same request hook (each hop is a request) + `WebResourceRequest.isRedirect()` accounting | `NavigationGuardTest.refusesRedirectsToThirdParties`, `PolicyCases` |
 | Pop-ups cannot create a second surface and cannot escape | `web/ArenaWebChromeClient.onCreateWindow`, `web/PopupRouterClient` | `PopupBlockingTest` (12 tests: routed / refused / promoted, plus window bookkeeping) |
 | The one extra window (a sign-in hand-off) is still inside the app, still policed, and always closable | `ui/AuthWindow.java` (a `FrameLayout`, not an activity), `MainActivity.onSignInWindowRequested` / `closeSignInWindow` / `checkSignInWindowUrl` | `AuthWindowTest`, `PopupBlockingTest`, `SourceInvariantsTest.signInNeverLeavesTheApp`, `theOnlyWebViewsAreThePrimaryOneAndTheSignInWindow` |
-| The sign-in window is fenced: only Google's sign-in pages and the return hop to an Arena.ai page are displayable in it; everything else - including asset-only hosts - is refused and the window is destroyed | `PopupRouterClient.handle` (`isSignInNavigation` / `isProductNavigation` on every navigation, not just the first) | `PopupBlockingTest.aPromotedSignInWindowStillRefusesEverythingOutsideTheHandOff`, `PolicyCases` rows for `ssl.gstatic.com` as a document |
+| The sign-in window is fenced: only Google's sign-in pages, the exact-pinned connector OAuth pages and the return hop to an Arena.ai page are displayable in it; everything else - including asset-only hosts and unreviewed provider paths - is refused and the window is destroyed | `PopupRouterClient.handle` (`isSignInNavigation` / `isConnectorNavigation` / `isProductNavigation` on every navigation, not just the first) | `PopupBlockingTest.aPromotedSignInWindowStillRefusesEverythingOutsideTheHandOff`, `ConnectorWindowTest.connectorPathsOutsideTheReviewedSetStillCloseTheWindow`, `PolicyCases` rows for `ssl.gstatic.com` as a document |
+| A provider page can never replace the user's Arena.ai page | `PolicyConfig.evaluatePrimaryDocument` → `BlockReason.CONNECTOR_WINDOW_ONLY`, used by `ArenaWebViewClient`, the URL watchdog and history checks | `ConnectorWindowPolicyTest`, `ConnectorWindowTest.mainWebViewNeverAcceptsConnectorLoginPages`, `SourceInvariantsTest` |
+| The OAuth WebView survives provider login, Arena staging and the callback so `window.opener`/`postMessage` works; hidden first-party staging is bounded to 8 seconds | `PopupRouterClient` (`promotedToSignInWindow`, `stagingTimeout`, `isHandoffStagingNavigation`) | `ConnectorWindowTest.connectorHandOffStaysInOneWindowAcrossTheStagingHop`, `PopupBlockingTest` |
+| The enlarged page and sidebar stay fully scrollable after the Agent Mode UI grows | `ArenaWebViewClient.SIDEBAR_GUARD_SCRIPT`, `ResponsiveScrollTest` | CI `responsive-tests` at 720x1280, 1280x720 and 800x1280 (see TEST_REPORT.md §2) |
 | An iframe may embed an asset-only host, but the app is never navigated to one | `policy/UrlPolicy.TrafficClass.SUBDOCUMENT`, `web/ArenaWebViewClient.shouldOverrideUrlLoading` (`isForMainFrame()`), `PolicyConfig.evaluateSubdocument` | `PolicyCases` (frame rows + the document refusals for the same URLs), `UrlPolicyTest.anEmbeddableWidgetHostIsStillNeverAReachablePage`, `NavigationGuardTest` (device) |
 | An allow-listed host is never refused while a real page loads | consistency of the allow-list with itself, asserted on a device against the live sign-in page and the site's widgets | `GoogleSignInLiveTest.refusedAllowListedHosts` (fails the build if a Google/widget host is recorded as refused) |
 | A challenge can be displayed but never answered, automated or bypassed | CAPTCHA hosts are `Role.ASSET` entries pinned to `/recaptcha/` and `/turnstile/`; no bridge, no injected script, no solver | `AllowlistRegressionTest`, `PolicyCases` (path escapes and every other path on those hosts refused) |
@@ -86,9 +98,9 @@ is Google's server-side policy and this app does not work around it (README §3,
    (`www.google.com/recaptcha/`, `www.recaptcha.net/recaptcha/`, `www.gstatic.com/recaptcha/`,
    `challenges.cloudflare.com/turnstile/`) so a challenge renders and **you** answer it. The app never
    pre-answers, scripts, automates or solves a challenge: it has no JavaScript bridge, injects no script
-   into the page and has no access to what you type. Turning both switches off
-   (`ENABLE_CAPTCHA_WIDGETS`, `ENABLE_GOOGLE_SIGN_IN`) returns the build to refusing those hosts
-   entirely, and the unit suite then asserts the smaller host list.
+   into the page and has no access to what you type. Turning the relevant switches off
+   (`ENABLE_CAPTCHA_WIDGETS`, `ENABLE_GOOGLE_SIGN_IN`, `ENABLE_AGENT_CONNECTORS`) returns the build to
+   refusing those hosts entirely, and the unit suite then asserts the smaller host list.
 5. **Google's sign-in pages may refuse to load in an embedded browser.** Google documents sign-in inside
    a WebView as unsupported and commonly answers `accounts.google.com` with a "this browser or app may
    not be secure" page. This is a server-side decision by Google that this app does not try to defeat
@@ -97,15 +109,35 @@ is Google's server-side policy and this app does not work around it (README §3,
    `; wv` token that marks an Android WebView, and leaves the Chrome/Android version string otherwise
    intact - the same string the device's Chrome would send. The device log records which page Google
    actually served (TEST_REPORT.md §3). Arena.ai's own sign-in inside the WebView is unaffected, and the
-   allow-list still refuses every other Google host - Gmail, Drive, `googleapis.com`, Google Search and
-   the rest.
-6. **`accounts.google.com` may be shown in the main view as well as in the sign-in window.** It is the
-   one third-party host with `Role.SIGN_IN`, and that role is not tied to a surface: the sign-in window
-   is where the OAuth pop-up flow puts it, but a redirect-based flow that navigates the main view there
-   is allowed too (and is what `GoogleSignInLiveTest` exercises). Either way it is the same single host,
-   path-free, port 443, and every other Google host stays refused.
+   allow-list still refuses every other Google *page* host - `googleapis.com`, Google Search, YouTube
+   and the rest. Google Workspace connectors use `accounts.google.com` for their consent screen and their
+   APIs as generic HTTPS sub-resources; they are not a general Google web app in this wrapper.
+6. **`accounts.google.com` may be shown in the main view as well as in the sign-in window.** It has
+   `Role.SIGN_IN`, which is not tied to a surface: the sign-in window is where the OAuth pop-up flow puts
+   it, but a redirect-based flow that navigates the main view there is allowed too (and is what
+   `GoogleSignInLiveTest` exercises). Either way it is the same single host, path-free, port 443.
+7. **Connector success depends on services outside this app.** An OAuth hand-off only completes if Arena
+   is signed in, the connector is toggled for the turn, the pinned provider page is reachable and the user
+   approves it. CI proves the routing and rendering with synthetic URLs, not a real credential or a live
+   provider consent. Some Arena pages answer the CI runner with HTTP 403 from Cloudflare; the app never
+   solves or bypasses that - the user does. If a provider changes its authorize path or adds a new domain,
+   this build will refuse it until the allow-list is deliberately re-audited.
+8. **The OAuth window is a real exception, kept narrow.** It can show an exact-pinned third-party page,
+   so a bug in the provider's page or in Arena's callback handler is outside this wrapper's control. The
+   mitigation is surface isolation (never the main WebView, never a browser), exact path pins, a closed set
+   of hosts, the same request/egress interception on that WebView, close/back/watchdog teardown, and the
+   8-second bound on hidden staging pages. No sandbox protection was disabled; no bridge, file access,
+   cleartext traffic, non-443 tunnel or external intent was added.
 
-## 5. Residual risks and abuse
+## 5. Residual risks, required configuration and external requirements
+
+**Connector prerequisites (no extra app permissions are requested).** The app still declares only
+`INTERNET` and `ACCESS_NETWORK_STATE`; there is no new Android permission, service, receiver, provider
+or exported component. The user needs an Arena account, a provider account, the relevant app enabled in
+Arena's connector menu and enabled for the turn, and network access to `arena.ai`, `accounts.google.com`
+and the pinned provider hosts over HTTPS/443. Google/Cloudflare may require the user to solve a challenge.
+The capability switches are compile-time constants in `ArenaAllowlist`; to deploy with connectors disabled,
+set `ENABLE_AGENT_CONNECTORS = false` and rebuild - the JVM tests assert the resulting smaller host list.
 
 * **The demo signing key is public** (`keystore/README.md`). Anyone can produce an APK with the same
   signing identity as the release artifacts. Use your own key for anything you distribute.

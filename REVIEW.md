@@ -1,3 +1,12 @@
+# Historical review (1.1.0)
+
+This file is kept as the original 1.1.0 code examination and is **not** the current state of the app.
+For the current 1.4.0 connector/security/limitation details and test results, read
+[README.md](README.md), [SECURITY.md](SECURITY.md), [TEST_REPORT.md](TEST_REPORT.md) and
+[docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md).
+
+---
+
 # Code examination and test report - Arena WebView (Locked) 1.1.0
 
 Date: 2026-10-13. Scope: the whole repository at commit `6e55214` (`main`), examined and tested with the

@@ -1,5 +1,14 @@
 # Raw CI evidence
 
+**1.4.0 note (2026-11-26):** the current, authoritative evidence is the check-run annotations and
+uploaded artifacts of Actions run
+[45869528987](https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45869528987)
+(2801 JVM tests, 62 instrumented tests, three responsive probes, APK checksums), the responsive probe
+logs in `docs/evidence/responsive/`, and the live site audit in
+`docs/evidence/site-audit/site-audit.md`. The older excerpts below are retained as historical records.
+
+---
+
 Verbatim excerpts from the GitHub Actions runs, kept in the repository so every number in
 [TEST_REPORT.md](../TEST_REPORT.md) can be checked without trusting the summary. Nothing here is
 paraphrased.
