@@ -84,6 +84,172 @@ public class LiveArenaSmokeTest {
     }
 
     /**
+     * The live page must stay scrollable inside the wrapper, measured on a real WebView.
+     *
+     * <p>The site is a full-height flex shell whose transcript scrolls internally, so the failure this
+     * guards against is subtle: if anything clamps the document - an {@code overflow: hidden} on
+     * {@code html}/{@code body}, a fixed viewport, a zero-height flex child - the end of a long answer
+     * becomes unreachable on a short screen. The app's own injected CSS cannot cause that (it is scoped
+     * to sidebar selectors and refuses to touch {@code body}/{@code html}), so the property is asserted
+     * where it can actually be observed rather than assumed.</p>
+     *
+     * <p>The probe reports every measurement in the log, so a failure describes the page that was
+     * actually seen instead of only saying that something was wrong.</p>
+     */
+    @Test
+    public void theLivePageRemainsScrollable() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            String url = waitForSite(scenario);
+            if (url == null || url.isEmpty()) {
+                Log.w(TAG, "scroll check skipped: the site did not load (offline emulator)");
+                return;
+            }
+            assertTrue("the wrapper must only ever end up on arena.ai, was: " + url,
+                    url.startsWith("https://arena.ai/"));
+
+            // Facts that together decide whether a drag can reach the bottom of the page:
+            //   * how much scrollable range the document and the body report,
+            //   * whether either of them clamps overflow,
+            //   * whether some descendant is an internal scroll container (the transcript), which is
+            //     the site's normal layout and is not a wrapper failure.
+            String probe = "(function(){"
+                    + "function cs(e){var s=getComputedStyle(e);return{overflowY:s.overflowY,"
+                    + "height:e.clientHeight,position:s.position};}"
+                    + "function range(e){return e?e.scrollHeight-e.clientHeight:0;}"
+                    + "var de=document.documentElement,b=document.body;"
+                    + "var inner=0,innerCount=0;"
+                    + "var all=document.querySelectorAll('div,main,section');"
+                    + "for(var i=0;i<all.length;i++){var e=all[i];"
+                    + "  var st=getComputedStyle(e);"
+                    + "  if(st.overflowY==='auto'||st.overflowY==='scroll'){"
+                    + "    var r=range(e); if(r>0){innerCount++; if(r>inner)inner=r;} }}"
+                    + "return JSON.stringify({"
+                    + "  vw:Math.round(window.innerWidth),"
+                    + "  vh:Math.round(window.innerHeight),"
+                    + "  docRange:Math.round(range(de)),"
+                    + "  bodyRange:Math.round(range(b)),"
+                    + "  docOverflowY:cs(de).overflowY,"
+                    + "  bodyOverflowY:cs(b).overflowY,"
+                    + "  bodyPosition:cs(b).position,"
+                    + "  docContentHeight:Math.round(de.scrollHeight),"
+                    + "  innerScrollRange:Math.round(inner),"
+                    + "  innerScrollContainers:innerCount"
+                    + "});"
+                    + "})()";
+            final AtomicReference<String> raw = new AtomicReference<String>();
+            final CountDownLatch latch = new CountDownLatch(1);
+            scenario.onActivity(activity -> {
+                WebView webView = activity.findViewById(R.id.arena_webview);
+                assertNotNull(webView);
+                webView.evaluateJavascript(probe, value -> {
+                    raw.set(value);
+                    latch.countDown();
+                });
+            });
+            if (!latch.await(15, TimeUnit.SECONDS) || raw.get() == null) {
+                Log.w(TAG, "scroll check skipped: the probe returned nothing");
+                return;
+            }
+            String json = raw.get();
+            Log.i(TAG, "live scroll probe: " + json);
+
+            long vh = ScrollProbe.number(json, "vh");
+            long docRange = ScrollProbe.number(json, "docRange");
+            long bodyRange = ScrollProbe.number(json, "bodyRange");
+            long contentHeight = ScrollProbe.number(json, "docContentHeight");
+            long innerRange = ScrollProbe.number(json, "innerScrollRange");
+            String docOverflow = ScrollProbe.text(json, "docOverflowY");
+            String bodyOverflow = ScrollProbe.text(json, "bodyOverflowY");
+
+            assertTrue("the viewport height must be measurable, probe was: " + json, vh > 0);
+
+            // If the content is taller than the screen, the page must offer a way to reach the rest:
+            // either the document scrolls, or an inner container does. (Both are normal for this site.)
+            boolean contentOverflows = contentHeight > vh;
+            if (contentOverflows) {
+                assertTrue("a page taller than the screen must be scrollable somewhere - document range="
+                                + docRange + ", body range=" + bodyRange + ", inner range=" + innerRange
+                                + ", viewport=" + vh + ", content=" + contentHeight + ", probe: " + json,
+                        docRange > 0 || bodyRange > 0 || innerRange > 0);
+            }
+
+            // A clamp on both the document and the body would make the overflow unreachable even if an
+            // inner container existed, so it is refused outright.
+            boolean bothClamped = "hidden".equals(docOverflow) && "hidden".equals(bodyOverflow);
+            assertTrue("the wrapper must never leave html and body both clamped: probe was " + json,
+                    !bothClamped);
+        }
+    }
+
+    /** Small JSON reader for the probe above: flat object, numbers and strings only. */
+    static final class ScrollProbe {
+        private ScrollProbe() {
+        }
+
+        static long number(String json, String key) {
+            String value = raw(json, key);
+            if (value == null) {
+                return 0;
+            }
+            try {
+                return Math.round(Double.parseDouble(value));
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+
+        static String text(String json, String key) {
+            if (json == null || key == null) {
+                return "";
+            }
+            int at = json.indexOf("\"" + key + "\"");
+            if (at < 0) {
+                return "";
+            }
+            int colon = json.indexOf(':', at);
+            if (colon < 0) {
+                return "";
+            }
+            int quote = json.indexOf('\"', colon + 1);
+            if (quote < 0) {
+                return "";
+            }
+            int close = json.indexOf('\"', quote + 1);
+            if (close < 0) {
+                return "";
+            }
+            return json.substring(quote + 1, close);
+        }
+
+        private static String raw(String json, String key) {
+            if (json == null || key == null) {
+                return null;
+            }
+            int at = json.indexOf("\"" + key + "\"");
+            if (at < 0) {
+                return null;
+            }
+            int colon = json.indexOf(':', at);
+            if (colon < 0) {
+                return null;
+            }
+            int i = colon + 1;
+            while (i < json.length() && Character.isWhitespace(json.charAt(i))) {
+                i++;
+            }
+            int start = i;
+            while (i < json.length()) {
+                char c = json.charAt(i);
+                if (c == ',' || c == '}' || c == '\"') {
+                    break;
+                }
+                i++;
+            }
+            return json.substring(start, i).trim();
+        }
+    }
+
+    /**
      * Waits until the wrapper is on arena.ai, and (best effort) until the page has finished loading.
      * Returns the URL the WebView ended up on, or null/"" if nothing loaded (offline emulator).
      */
