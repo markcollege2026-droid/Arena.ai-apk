@@ -1,7 +1,7 @@
 # Live site audit
 
-Run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45845602126
-UTC: 2026-11-26 15:06:37
+Run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45845948026
+UTC: 2026-11-26 15:08:55
 
 | Probe | HTTP | Requested | Effective |
 | --- | --- | --- | --- |
@@ -34,7 +34,7 @@ UTC: 2026-11-26 15:06:37
 | docs-agent | 200 | https://help.arena.ai/articles/5432423882-how-to-use-agent-mode | https://help.arena.ai/articles/5432423882-how-to-use-agent-mode |
 | docs-coding | 200 | https://help.arena.ai/articles/1655691990-how-to-use-coding-in-agent-mode | https://help.arena.ai/articles/1655691990-how-to-use-coding-in-agent-mode |
 | docs-account | 200 | https://help.arena.ai/articles/7258407731-arena-how-to-create-an-account | https://help.arena.ai/articles/7258407731-arena-how-to-create-an-account |
-| oauth-google | 200 | https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=example.invalid&redirect_uri=https%3A%2F%2Farena.ai%2F | https://accounts.google.com/signin/oauth/error?authError=Cg9pbnZhbGlkX3JlcXVlc3QSIU1pc3NpbmcgcmVxdWlyZWQgcGFyYW1ldGVyOiBzY29wZRo3aHR0cHM6Ly9kZXZlbG9wZXJzLmdvb2dsZS5jb20vaWRlbnRpdHkvcHJvdG9jb2xzL29hdXRoMiCQAw&flowName=GeneralOAuthFlow&client_id=example.invalid&as=S-737808472%3A1795705569821966&aes=AYsA2T1t8YatoJsXRk2psKE3xII0 |
+| oauth-google | 200 | https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=example.invalid&redirect_uri=https%3A%2F%2Farena.ai%2F | https://accounts.google.com/signin/oauth/error?authError=Cg9pbnZhbGlkX3JlcXVlc3QSIU1pc3NpbmcgcmVxdWlyZWQgcGFyYW1ldGVyOiBzY29wZRo3aHR0cHM6Ly9kZXZlbG9wZXJzLmdvb2dsZS5jb20vaWRlbnRpdHkvcHJvdG9jb2xzL29hdXRoMiCQAw&flowName=GeneralOAuthFlow&client_id=example.invalid&as=S-1876192335%3A1795705695043290&aes=AYsA2T1t8YatoJsXRk2psKE3xII0 |
 | oauth-github | 200 | https://github.com/login/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://github.com/login?client_id=example&return_to=%2Flogin%2Foauth%2Fauthorize%3Fclient_id%3Dexample%26redirect_uri%3Dhttps%253A%252F%252Farena.ai%252F%26response_type%3Dcode |
 | oauth-notion | 200 | https://api.notion.com/v1/oauth/authorize?owner=user&response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://app.notion.com/install-integration?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F&owner=user |
 | oauth-linear | 200 | https://linear.app/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://linear.app/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F |
@@ -73,4 +73,13 @@ rsions=[])).push({version:"3.38.1",mode:"global",copyright:"© 2014-2024 Denis P
 stringify(a))}catch{}};return{enabledSlugs:[],acknowledgedSlugs:[],userId:null,hydrated:!1,overlayDismissNonce:0,dismissConnectorOverlays:()=>e({overlayDismissNonce:i().overlayDismissNonce+1}),connectingSlugs:[],markConnecting:t=>{i().connectingSlugs.includes(t)||e({connectingSlugs:[...i(
 t.analytics.capture({action:"connector_disconnected",params:{slug:e}})},"R",0,function(){t.analytics.capture({action:"connector_explore_opened",params:{}})},"E",0,function(){t.analytics.capture({action:"connector_menu_opened",params:{}})},"m",0,function(e,r){t.analytics.capture({action:
 trol","treatment-1"])),"agent-web-battles-v2":s(t.enum(["control","treatment-1","treatment-2","treatment-3"])),"disable-connectors-russia":s(o.z.boolean())},c=n.z.object(u).parse({});e.s(["Q",0,c,"p",0,u,"k",0,function(e){return null!=e&&"control"!==e}],861544)},109485,11518,e=>{var t=e.i(
+```
+
+## Connector hand-off / window.open references
+```text
+ailed to open",t,{flow:e?.type??"home",status:t instanceof N.P?t.status:void 0}),u(!0),o(null)}},i[0]=e):e=i[0];let p=e,m=(0,c.d)();i[1]!==m?(t=async()=>{let e=window.open("about:blank","_blank");e&&(e.opener=null),o("home"),u(!1);try{let t=await (0,L.e)();if(e){let n;e.location.href=t,ec?.(),n=()=>{(()=>{m.fetchQuery({...(0,L.Q)({fresh:!0}),staleTime:0}).catch(eu)})()
+nish(h??p,"stopped"));eH(async()=>{let t,s=()=>{};en.f.milestone(h,"create_request_started");let l=en.f.startPhase(h,"create_request");try{if(t=await (0,tz.f)("/api/coding-agent/sessions",{method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify({repoId:ej,repoOwner:i,repoName:o,baseBranch:tr,message:f,...x.length>0?{uploa
+ogle/popup-complete","D",0,function(){let e=Math.max(0,window.screenX+(window.outerWidth-500)/2),t=Math.max(0,window.screenY+(window.outerHeight-650)/2);return window.open("about:blank","arena-google-sign-in",`popup,width=500,height=650,left=${e},top=${t}`)},"E",0,function(e){return new Promise(t=>{let r=new BroadcastChannel("arena-google-sign-in-popup"),i=()=>{clearIn
+tor.commands.extendMarkRange(t.type.name)),t.openOnClick){var s,l;let n=oC(e.state,t.type.name),r=null!=(s=i.href)?s:n.href,a=null!=(l=i.target)?l:n.target;r&&(window.open(r,a),o=!0)}return o}}}))),this.options.linkOnPaste&&r.push((n={editor:this.editor,defaultProtocol:this.options.defaultProtocol,type:this.type,shouldAutoLink:this.options.shouldAutoLink},new e4({key:n
+scripts discovered: 60, fetched: 60
 ```
