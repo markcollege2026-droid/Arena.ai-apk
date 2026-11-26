@@ -12,6 +12,8 @@ import android.widget.FrameLayout;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import app.arenawebview.locked.policy.ArenaAllowlist;
+
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
