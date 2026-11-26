@@ -372,6 +372,13 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Record responsive job preflight
+        shell: bash
+        run: |
+          mkdir -p docs/evidence/responsive
+          printf 'screen=%s\ncwd=%s\n' '${{ matrix.screen }}' "$PWD" > docs/evidence/responsive/preflight.txt
+          ls -la docs/evidence/responsive
+
       - name: Measure scrollability at ${{ matrix.screen }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
