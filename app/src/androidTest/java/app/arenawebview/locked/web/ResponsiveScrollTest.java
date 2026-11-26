@@ -83,6 +83,7 @@ public class ResponsiveScrollTest {
                 final int height = metrics.heightPixels;
 
                 final WebView view = new WebView(context);
+                WebViewHardening.applyHardenedSettings(view.getSettings());
                 FrameLayout container = new FrameLayout(context);
                 container.addView(view, new FrameLayout.LayoutParams(width, height));
                 container.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -127,8 +128,12 @@ public class ResponsiveScrollTest {
                                 } catch (e) { return 'js-error:' + (e && e.message ? e.message : e); }
                                 })()
                                 """, value -> {
-                            probe.set(value);
-                            latch.countDown();
+                            // A null value means the script did not run (e.g. JavaScript disabled);
+                            // never treat that as a successful measurement.
+                            if (value != null) {
+                                probe.set(value);
+                                latch.countDown();
+                            }
                         });
                     }
                 });
