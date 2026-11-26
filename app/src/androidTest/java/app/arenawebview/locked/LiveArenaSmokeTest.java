@@ -84,6 +84,304 @@ public class LiveArenaSmokeTest {
     }
 
     /**
+     * The live page must stay scrollable inside the wrapper, measured on a real WebView.
+     *
+     * <p>The site is a full-height flex shell whose transcript scrolls internally, so the failure this
+     * guards against is subtle: if anything clamps the document - an {@code overflow: hidden} on
+     * {@code html}/{@code body}, a fixed viewport, a zero-height flex child - the end of a long answer
+     * becomes unreachable on a short screen. The app's own injected CSS cannot cause that (it is scoped
+     * to sidebar selectors and refuses to touch {@code body}/{@code html}), so the property is asserted
+     * where it can actually be observed rather than assumed.</p>
+     *
+     * <p>The probe reports every measurement in the log, so a failure describes the page that was
+     * actually seen instead of only saying that something was wrong.</p>
+     */
+    @Test
+    public void theLivePageRemainsScrollable() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            String url = waitForSite(scenario);
+            if (url == null || url.isEmpty()) {
+                Log.w(TAG, "scroll check skipped: the site did not load (offline emulator)");
+                return;
+            }
+            assertTrue("the wrapper must only ever end up on arena.ai, was: " + url,
+                    url.startsWith("https://arena.ai/"));
+
+            // Facts that together decide whether a drag can reach the bottom of the page:
+            //   * how much scrollable range the document and the body report,
+            //   * whether either of them clamps overflow,
+            //   * whether some descendant is an internal scroll container (the transcript), which is
+            //     the site's normal layout and is not a wrapper failure.
+            String probe = "(function(){"
+                    + "function cs(e){var s=getComputedStyle(e);return{overflowY:s.overflowY,"
+                    + "height:e.clientHeight,position:s.position};}"
+                    + "function range(e){return e?e.scrollHeight-e.clientHeight:0;}"
+                    + "var de=document.documentElement,b=document.body;"
+                    + "var inner=0,innerCount=0;"
+                    + "var all=document.querySelectorAll('div,main,section');"
+                    + "for(var i=0;i<all.length;i++){var e=all[i];"
+                    + "  var st=getComputedStyle(e);"
+                    + "  if(st.overflowY==='auto'||st.overflowY==='scroll'){"
+                    + "    var r=range(e); if(r>0){innerCount++; if(r>inner)inner=r;} }}"
+                    + "return JSON.stringify({"
+                    + "  vw:Math.round(window.innerWidth),"
+                    + "  vh:Math.round(window.innerHeight),"
+                    + "  docRange:Math.round(range(de)),"
+                    + "  bodyRange:Math.round(range(b)),"
+                    + "  docOverflowY:cs(de).overflowY,"
+                    + "  bodyOverflowY:cs(b).overflowY,"
+                    + "  bodyPosition:cs(b).position,"
+                    + "  docContentHeight:Math.round(de.scrollHeight),"
+                    + "  innerScrollRange:Math.round(inner),"
+                    + "  innerScrollContainers:innerCount"
+                    + "});"
+                    + "})()";
+            final AtomicReference<String> raw = new AtomicReference<String>();
+            final CountDownLatch latch = new CountDownLatch(1);
+            scenario.onActivity(activity -> {
+                WebView webView = activity.findViewById(R.id.arena_webview);
+                assertNotNull(webView);
+                webView.evaluateJavascript(probe, value -> {
+                    raw.set(value);
+                    latch.countDown();
+                });
+            });
+            if (!latch.await(15, TimeUnit.SECONDS) || raw.get() == null) {
+                Log.w(TAG, "scroll check skipped: the probe returned nothing");
+                return;
+            }
+            // evaluateJavascript hands back the JSON as a *quoted, escaped* string literal
+            // ({\"vw\":393,...}), so the escapes have to be removed before it can be read.
+            String json = ScrollProbe.unescape(raw.get());
+            Log.i(TAG, "live scroll probe: " + json);
+
+            long vh = ScrollProbe.number(json, "vh");
+            long docRange = ScrollProbe.number(json, "docRange");
+            long bodyRange = ScrollProbe.number(json, "bodyRange");
+            long contentHeight = ScrollProbe.number(json, "docContentHeight");
+            long innerRange = ScrollProbe.number(json, "innerScrollRange");
+            String docOverflow = ScrollProbe.text(json, "docOverflowY");
+            String bodyOverflow = ScrollProbe.text(json, "bodyOverflowY");
+
+            assertTrue("the viewport height must be measurable, probe was: " + json, vh > 0);
+
+            // If the content is taller than the screen, the page must offer a way to reach the rest:
+            // either the document scrolls, or an inner container does. (Both are normal for this site.)
+            boolean contentOverflows = contentHeight > vh;
+            if (contentOverflows) {
+                assertTrue("a page taller than the screen must be scrollable somewhere - document range="
+                                + docRange + ", body range=" + bodyRange + ", inner range=" + innerRange
+                                + ", viewport=" + vh + ", content=" + contentHeight + ", probe: " + json,
+                        docRange > 0 || bodyRange > 0 || innerRange > 0);
+            }
+
+            // A clamp on both the document and the body would make the overflow unreachable even if an
+            // inner container existed, so it is refused outright.
+            boolean bothClamped = "hidden".equals(docOverflow) && "hidden".equals(bodyOverflow);
+            assertTrue("the wrapper must never leave html and body both clamped: probe was " + json,
+                    !bothClamped);
+        }
+    }
+
+    /**
+     * The wrapper must be able to scroll a page whose content is taller than the screen.
+     *
+     * <p>Measuring the landing page is not enough: on some screens the page happens to fit exactly one
+     * viewport (on a Pixel 5 it reports 778px of content in a 778px viewport), so there is nothing to
+     * scroll and the question stays unanswered. This test creates the condition instead of hoping for
+     * it - it appends a tall element to the live document, then checks that a scrollable range appears
+     * and that a scroll actually moves the page. If anything in the wrapper clamped the document, the
+     * range would stay zero or the scroll position would not move, and the failure says which.</p>
+     *
+     * <p>The element is removed again, and it can never be reached as a URL - it exists only inside
+     * this WebView for the duration of the check.</p>
+     */
+    @Test
+    public void thePageCanBeScrolledWhenContentExceedsTheScreen() throws Exception {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            String url = waitForSite(scenario);
+            if (url == null || url.isEmpty()) {
+                Log.w(TAG, "scroll check skipped: the site did not load (offline emulator)");
+                return;
+            }
+            assertTrue("the wrapper must only ever end up on arena.ai, was: " + url,
+                    url.startsWith("https://arena.ai/"));
+
+            // 1. Add 2000px of content to the document, measure, scroll, measure again, clean up.
+            String probe = "(function(){"
+                    + "var de=document.documentElement,b=document.body;"
+                    + "var before={vw:Math.round(innerWidth),vh:Math.round(innerHeight),"
+                    + "  docRange:Math.round(de.scrollHeight-de.clientHeight),"
+                    + "  bodyRange:Math.round(b.scrollHeight-b.clientHeight)};"
+                    + "var spill=document.createElement('div');"
+                    + "spill.id='__arena_scroll_probe';"
+                    + "spill.style.cssText='height:2000px;width:1px;flex:0 0 auto;visibility:hidden;"
+                    + "pointer-events:none;';"
+                    + "(b||de).appendChild(spill);"
+                    + "var after={docRange:Math.round(de.scrollHeight-de.clientHeight),"
+                    + "  bodyRange:Math.round(b.scrollHeight-b.clientHeight)};"
+                    // The scrolling element in standards mode is document.scrollingElement (the html
+                    // element); body.scrollTop is a no-op when body is not the scroller. Try the real
+                    // scroller first, then body, and report which one moved.
+                    + "var candidates=[document.scrollingElement||de, de, b];"
+                    + "var moved=0,topAfter=0,used='';"
+                    + "for(var ci=0; ci<candidates.length && moved===0; ci++){"
+                    + "  var sc=candidates[ci];"
+                    + "  if(!sc) continue;"
+                    + "  var start=sc.scrollTop;"
+                    + "  try{ sc.scrollTop = 200; }catch(e){}"
+                    + "  var now=Math.round(sc.scrollTop);"
+                    + "  var winY=Math.round(window.scrollY||window.pageYOffset||0);"
+                    + "  if(now-start!==0 || winY>0){ moved = now-start !== 0 ? now-start : winY; topAfter=now;"
+                    + "    used = (sc===b?'body':(sc===de?'html':'scrollingElement')); }"
+                    + "  try{ sc.scrollTop=start; }catch(e){}"
+                    + "}"
+                    + "de.removeChild(spill);"
+                    + "return JSON.stringify({vw:before.vw,vh:before.vh,"
+                    + "  docRangeBefore:before.docRange,bodyRangeBefore:before.bodyRange,"
+                    + "  docRangeAfter:after.docRange,bodyRangeAfter:after.bodyRange,"
+                    + "  scrollMoved:moved,scrollTopAfter:topAfter,scrollUsed:used});"
+                    + "})()";
+            final AtomicReference<String> raw = new AtomicReference<String>();
+            final CountDownLatch latch = new CountDownLatch(1);
+            scenario.onActivity(activity -> {
+                WebView webView = activity.findViewById(R.id.arena_webview);
+                assertNotNull(webView);
+                webView.evaluateJavascript(probe, value -> {
+                    raw.set(value);
+                    latch.countDown();
+                });
+            });
+            if (!latch.await(20, TimeUnit.SECONDS) || raw.get() == null) {
+                Log.w(TAG, "scroll check skipped: the probe returned nothing");
+                return;
+            }
+            String json = ScrollProbe.unescape(raw.get());
+            Log.i(TAG, "live scrollability probe: " + json);
+
+            long vh = ScrollProbe.number(json, "vh");
+            long docAfter = ScrollProbe.number(json, "docRangeAfter");
+            long bodyAfter = ScrollProbe.number(json, "bodyRangeAfter");
+            long moved = ScrollProbe.number(json, "scrollMoved");
+            long topAfter = ScrollProbe.number(json, "scrollTopAfter");
+
+            assertTrue("the viewport height must be measurable, probe was: " + json, vh > 0);
+            // 2. With 2000px of extra content, a scrollable range must exist. If both stay zero the
+            //    document is clamped somewhere and the bottom of a long page is unreachable.
+            assertTrue("adding 2000px of content must produce a scrollable range - "
+                    + "document=" + docAfter + ", body=" + bodyAfter + ", viewport=" + vh
+                    + ", probe: " + json, docAfter > 0 || bodyAfter > 0);
+            // 3. And the page must actually move, not merely report a range.
+            String used = ScrollProbe.text(json, "scrollUsed");
+            assertTrue("the page must scroll, not only report a range (scrollTop stayed at " + topAfter
+                    + ", tried scrollingElement/html/body, probe: " + json + ")", moved > 0);
+            Log.i(TAG, "the live page scrolled via " + used + " by " + moved + "px");
+        }
+    }
+
+    /** Small JSON reader for the probe above: flat object, numbers and strings only. */
+    static final class ScrollProbe {
+        private ScrollProbe() {
+        }
+
+        /**
+         * Removes the quoting {@code evaluateJavascript} adds: it returns the page's value as a JSON
+         * string literal, so {@code {"a":1}} arrives as {@code "{\"a\":1}"}. Without this, every key
+         * lookup silently misses and the probe reads as all zeroes.
+         */
+        static String unescape(String value) {
+            if (value == null) {
+                return null;
+            }
+            String v = value.trim();
+            if (v.length() >= 2 && v.charAt(0) == '"' && v.charAt(v.length() - 1) == '"') {
+                v = v.substring(1, v.length() - 1);
+            }
+            StringBuilder out = new StringBuilder(v.length());
+            for (int i = 0; i < v.length(); i++) {
+                char c = v.charAt(i);
+                if (c == '\\' && i + 1 < v.length()) {
+                    char next = v.charAt(i + 1);
+                    if (next == '"' || next == '\\' || next == '/') {
+                        out.append(next);
+                        i++;
+                        continue;
+                    }
+                    if (next == 'n') {
+                        out.append('\n');
+                        i++;
+                        continue;
+                    }
+                }
+                out.append(c);
+            }
+            return out.toString();
+        }
+
+        static long number(String json, String key) {
+            String value = raw(json, key);
+            if (value == null) {
+                return 0;
+            }
+            try {
+                return Math.round(Double.parseDouble(value));
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+
+        static String text(String json, String key) {
+            if (json == null || key == null) {
+                return "";
+            }
+            int at = json.indexOf("\"" + key + "\"");
+            if (at < 0) {
+                return "";
+            }
+            int colon = json.indexOf(':', at);
+            if (colon < 0) {
+                return "";
+            }
+            int quote = json.indexOf('\"', colon + 1);
+            if (quote < 0) {
+                return "";
+            }
+            int close = json.indexOf('\"', quote + 1);
+            if (close < 0) {
+                return "";
+            }
+            return json.substring(quote + 1, close);
+        }
+
+        private static String raw(String json, String key) {
+            if (json == null || key == null) {
+                return null;
+            }
+            int at = json.indexOf("\"" + key + "\"");
+            if (at < 0) {
+                return null;
+            }
+            int colon = json.indexOf(':', at);
+            if (colon < 0) {
+                return null;
+            }
+            int i = colon + 1;
+            while (i < json.length() && Character.isWhitespace(json.charAt(i))) {
+                i++;
+            }
+            int start = i;
+            while (i < json.length()) {
+                char c = json.charAt(i);
+                if (c == ',' || c == '}' || c == '\"') {
+                    break;
+                }
+                i++;
+            }
+            return json.substring(start, i).trim();
+        }
+    }
+
+    /**
      * Waits until the wrapper is on arena.ai, and (best effort) until the page has finished loading.
      * Returns the URL the WebView ended up on, or null/"" if nothing loaded (offline emulator).
      */

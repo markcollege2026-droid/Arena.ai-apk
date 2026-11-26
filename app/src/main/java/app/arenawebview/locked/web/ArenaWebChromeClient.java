@@ -92,6 +92,15 @@ public class ArenaWebChromeClient extends WebChromeClient {
         WebViewHardening.applyHardenedSettings(popup.getSettings());
         WebViewHardening.applyCookiePolicy(context, popup);
         livePopups.add(popup);
+        // Record who opened this window. Arena starts a connector hand-off by opening its own staging
+        // page from the Agent page, and that page has to stay in this window for the OAuth flow to
+        // work; a window opened from anywhere else keeps the original fold-into-the-main-view rule.
+        String openerUrl = null;
+        try {
+            openerUrl = view == null ? null : view.getUrl();
+        } catch (Throwable ignored) {
+            // An unreadable opener is treated as "unknown", which takes the conservative path.
+        }
         popup.setWebViewClient(new PopupRouterClient(host, popup, new Runnable() {
             @Override
             public void run() {
@@ -100,7 +109,7 @@ public class ArenaWebChromeClient extends WebChromeClient {
                 }
                 host.onPopupClosed(popup);
             }
-        }));
+        }, openerUrl, true));
         transport.setWebView(popup);
         // Handing the hidden WebView over lets Chromium tell us which URL the new window wanted; it is
         // never attached to any view hierarchy, so it can never be seen. A Message without a target

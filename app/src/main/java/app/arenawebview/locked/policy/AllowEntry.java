@@ -35,7 +35,18 @@ public final class AllowEntry {
         /** A third-party asset host: sub-resources only, never a page. */
         ASSET,
         /** A third-party page that is part of a sign-in hand-off (Google's OAuth pages). */
-        SIGN_IN
+        SIGN_IN,
+        /**
+         * A third-party <em>authorisation</em> page that an Agent Mode connector needs: it may become a
+         * page, but only at the entry's exact path prefixes - the provider's OAuth {@code authorize}
+         * endpoint and nothing else.
+         *
+         * <p>This is deliberately narrower than {@link #SIGN_IN} (which is path-free because Google's
+         * sign-in flow lives at arbitrary paths on its one account host). A connector only ever needs
+         * the one endpoint it redirects to, so the rest of that provider's site (dashboards, settings,
+         * repositories, mail) stays unreachable exactly as before.</p>
+         */
+        CONNECTOR
     }
 
     /** Exact canonical host, lower case, ASCII. */
@@ -51,6 +62,17 @@ public final class AllowEntry {
     private final Role role;
 
     /**
+     * When true, the path prefixes above are <em>whole</em> paths, not prefixes: the request path must
+     * equal one of them.
+     *
+     * <p>This matters for OAuth endpoints that sit beside siblings on the same host: GitHub serves
+     * {@code /login/oauth/authorize} and {@code /login/oauth/access_token}, Linear serves
+     * {@code /oauth/authorize} beside other endpoints. A plain prefix would let a token endpoint become
+     * a page. Exact matching is opt-in per entry so the existing prefix entries are unaffected.</p>
+     */
+    private final boolean exactPaths;
+
+    /**
      * @param host         exact canonical host (lower case ASCII, e.g. {@code arena.ai})
      * @param pathPrefixes optional path prefixes such as {@code /recaptcha/}; empty means any path
      * @param purpose      why this host is reachable, for auditability
@@ -63,6 +85,14 @@ public final class AllowEntry {
      * @param role what the entry is for; {@link Role#ASSET} means "sub-resources only, never a page"
      */
     public AllowEntry(String host, List<String> pathPrefixes, String purpose, Role role) {
+        this(host, pathPrefixes, purpose, role, false);
+    }
+
+    /**
+     * @param exactPaths true when the prefixes must match the whole request path, not just its start
+     */
+    public AllowEntry(String host, List<String> pathPrefixes, String purpose, Role role,
+                      boolean exactPaths) {
         String canonical = UrlPolicy.canonicalizeHost(host);
         if (canonical == null) {
             // A malformed allow-list entry is a programming error and must fail loudly at start-up
@@ -86,6 +116,7 @@ public final class AllowEntry {
         this.pathPrefixes = Collections.unmodifiableList(cleaned);
         this.purpose = purpose == null ? "" : purpose;
         this.role = role == null ? Role.PRODUCT : role;
+        this.exactPaths = exactPaths;
     }
 
     /** Convenience factory for an "any path on this host" entry. */
@@ -107,6 +138,23 @@ public final class AllowEntry {
         return new AllowEntry(host, pathPrefixes, purpose, Role.SIGN_IN);
     }
 
+    /**
+     * Convenience factory for a third-party connector's OAuth authorisation endpoint.
+     *
+     * <p>The entry <b>must</b> be path-restricted: a connector page role without a path pin would make
+     * the provider's whole site navigable, which is precisely what this wrapper refuses to do. An empty
+     * prefix list is therefore a programming error and throws at start-up rather than silently widening
+     * the policy.</p>
+     */
+    public static AllowEntry connectorSignIn(String host, List<String> authorizePathPrefixes,
+                                             String purpose) {
+        if (authorizePathPrefixes == null || authorizePathPrefixes.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "A connector authorisation entry must be pinned to its authorize path: " + host);
+        }
+        return new AllowEntry(host, authorizePathPrefixes, purpose, Role.CONNECTOR, true);
+    }
+
     /** True when this host may serve sub-resources but must never become the visible document. */
     public boolean isResourceOnly() {
         return role == Role.ASSET;
@@ -115,6 +163,22 @@ public final class AllowEntry {
     /** True when this entry is a step of a sign-in hand-off rather than an Arena.ai page. */
     public boolean isSignIn() {
         return role == Role.SIGN_IN;
+    }
+
+    /**
+     * True when this entry is a connector's OAuth authorisation endpoint: page-capable, but only at the
+     * exact path prefixes it declares.
+     */
+    public boolean isConnector() {
+        return role == Role.CONNECTOR;
+    }
+
+    /**
+     * True when this entry may become the app's visible page. Only {@link Role#PRODUCT}, {@link
+     * Role#SIGN_IN} and {@link Role#CONNECTOR} entries can; an asset entry never can.
+     */
+    public boolean isPageCapable() {
+        return role != Role.ASSET;
     }
 
     /** True when this entry is part of the product itself. */
@@ -143,6 +207,11 @@ public final class AllowEntry {
         return !pathPrefixes.isEmpty();
     }
 
+    /** True when the restriction is an exact-path match rather than a prefix match. */
+    public boolean isExactPaths() {
+        return exactPaths;
+    }
+
     /**
      * Match the raw (still percent-encoded) path of a request against this entry's prefixes.
      *
@@ -156,6 +225,20 @@ public final class AllowEntry {
             return true;
         }
         if (rawPath == null || rawPath.indexOf('%') >= 0 || rawPath.contains("..")) {
+            return false;
+        }
+        if (exactPaths) {
+            for (String prefix : pathPrefixes) {
+                if (rawPath.equals(prefix)) {
+                    return true;
+                }
+                // "/login/oauth/authorize/" is the same endpoint with a trailing slash, and a request
+                // line may carry one; nothing else is folded.
+                if (rawPath.equals(prefix + "/") || (prefix.endsWith("/")
+                        && rawPath.equals(prefix.substring(0, prefix.length() - 1)))) {
+                    return true;
+                }
+            }
             return false;
         }
         for (String prefix : pathPrefixes) {
@@ -203,9 +286,11 @@ public final class AllowEntry {
             sb.append(" [resource-only]");
         } else if (role == Role.SIGN_IN) {
             sb.append(" [sign-in page]");
+        } else if (role == Role.CONNECTOR) {
+            sb.append(" [connector authorize endpoint]");
         }
         if (isPathRestricted()) {
-            sb.append(" paths=").append(pathPrefixes);
+            sb.append(" paths=").append(String.valueOf(pathPrefixes));
         }
         if (!purpose.isEmpty()) {
             sb.append("  // ").append(purpose);

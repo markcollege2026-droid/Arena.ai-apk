@@ -116,9 +116,13 @@ public final class PolicyConfig {
     }
 
     /**
-     * True when the URL is a page of a sign-in hand-off (Google's account host) rather than an Arena.ai
-     * page. Used to decide whether a pop-up must become an in-app sign-in window: the OAuth flow needs a
-     * real window of its own, because the site's page talks to it through {@code window.opener}.
+     * True when the URL may live in a window that is allowed to stay open for a sign-in hand-off.
+     *
+     * <p>Two shapes qualify: Google's account pages (a full sign-in flow, hence no path pin) and a
+     * connector's OAuth authorisation endpoint (pinned to its exact path, so the rest of that provider's
+     * site still cannot be displayed). Used to decide whether a pop-up becomes an in-app window: the
+     * OAuth flow needs a real window of its own, because the site's page talks to it through
+     * {@code window.opener}.</p>
      */
     public boolean isSignInNavigation(String rawUrl) {
         PolicyResult result = evaluateNavigation(rawUrl);
@@ -126,7 +130,17 @@ public final class PolicyConfig {
             return false;
         }
         AllowEntry entry = result.matchedEntry();
-        return entry != null && entry.isSignIn();
+        return entry != null && (entry.isSignIn() || entry.isConnector());
+    }
+
+    /** True when the URL is a connector's authorisation endpoint rather than a Google sign-in page. */
+    public boolean isConnectorNavigation(String rawUrl) {
+        PolicyResult result = evaluateNavigation(rawUrl);
+        if (!result.isAllowed()) {
+            return false;
+        }
+        AllowEntry entry = result.matchedEntry();
+        return entry != null && entry.isConnector();
     }
 
     /** True when the URL is a page of the product itself (any first-party Arena host). */

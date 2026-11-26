@@ -42,10 +42,29 @@ public final class PopupRouterClient extends ArenaWebViewClient {
     private volatile boolean closed;
     private boolean promotedToSignInWindow;
 
+    /**
+     * The page that opened this window, captured at creation time. It decides whether a first hop to an
+     * Arena.ai page is allowed to stay in this window or must be folded into the main view.
+     */
+    private final String openerUrl;
+    private final boolean flowConnector;
+
     public PopupRouterClient(GuardHost host, WebView popup, Runnable onClosed) {
+        this(host, popup, onClosed, null, false);
+    }
+
+    /**
+     * @param openerUrl     the URL of the page that opened the window, or null when unknown
+     * @param flowConnector true when the opener is Arena's Agent page, i.e. the only place a connector
+     *                      hand-off can start
+     */
+    public PopupRouterClient(GuardHost host, WebView popup, Runnable onClosed, String openerUrl,
+                             boolean flowConnector) {
         super(host);
         this.popup = popup;
         this.onClosed = onClosed;
+        this.openerUrl = openerUrl;
+        this.flowConnector = flowConnector;
     }
 
     @Override
@@ -109,18 +128,52 @@ public final class PopupRouterClient extends ArenaWebViewClient {
             return false;
         }
 
-        // --- main frame: only a sign-in step or an Arena.ai page may live here --------------------
+        // --- main frame: only a sign-in/connector step or an Arena.ai page may live here -----------
+        // isSignInNavigation() covers both shapes: Google's account pages (no path pin) and a
+        // connector's OAuth authorize endpoint (path-pinned, so the provider's own site is still not
+        // reachable). A connector window therefore behaves exactly like the Google hand-off: it stays
+        // open, it is policed on every hop, and it can only ever show those two kinds of page plus
+        // Arena.ai itself.
+        //
+        // An Arena.ai page is allowed on the *first* hop, but only for a window the connector flow
+        // opened. Arena does not navigate straight to a provider: it opens a pop-up on its own staging
+        // page ("you will be sent to X to sign in") and only then redirects. Refusing that page used to
+        // destroy the window before any sign-in could start - the URL was routed into the main view, the
+        // window (and with it window.opener) was gone, and the site's own postMessage callback never
+        // fired, which is why the failure showed up both as an allow-list block and as a site error.
+        //
+        // The exception is kept as narrow as the bug: it applies only when the opener is the Agent page,
+        // the one place a connector hand-off can begin. Every other pop-up - including one whose opener
+        // could not be read - keeps the original guarantee that an allowed Arena.ai target is folded
+        // into the single visible WebView and this window is discarded. And an already-promoted window
+        // keeps the return hop to Arena.ai's callback, because that page is what reads the result.
         boolean signInStep = host.policy().isSignInNavigation(url);
         boolean sitePage = host.policy().isProductNavigation(url);
-        if (promotedToSignInWindow ? (signInStep || sitePage) : signInStep) {
-            // The sign-in hand-off. The window has to stay alive because Google's page returns its result
-            // to the page that opened it through window.opener/postMessage - a flow that only works if the
-            // window it opened still exists.
+        // The two narrow ways an Arena.ai page may stay in this window:
+        //   1. the connector flow is starting and this is its staging page - only when the window was
+        //      opened from the Agent page, so no other pop-up can acquire a window this way; and
+        //   2. the window is already the hand-off window and the site is returning to its callback,
+        //      which is the page that reads the result and must not be moved.
+        // Anything else is folded into the single visible WebView, exactly as before.
+        boolean stagingHop = sitePage && flowConnector && startsInConnectorFlow();
+        boolean returnHop = promotedToSignInWindow && sitePage;
+        if (signInStep || returnHop || stagingHop) {
+            // The sign-in / connector hand-off. The window has to stay alive because the provider's page
+            // returns its result to the page that opened it through window.opener/postMessage - a flow
+            // that only works if the window it opened still exists.
             //
             // Two kinds of navigation belong to that hand-off and both stay in this window:
-            //   1. Google's own pages (the OAuth consent page, the identifier and password steps), and
+            //   1. the provider's own pages (Google's identifier/password/consent steps, or a connector's
+            //      authorize endpoint and its sign-in steps), and
             //   2. the return hop to Arena.ai's callback URL, which is where the site reads the result and
             //      usually closes the window itself with window.close().
+            if (isHandOffComplete(url)) {
+                // The hand-off is over and the site did not close its own window. Close it here so the
+                // user is not left staring at a finished sign-in floating over the app.
+                host.onSignInWindowNavigated(url);
+                finish();
+                return true;
+            }
             if (!promotedToSignInWindow) {
                 promotedToSignInWindow = true;
                 host.metrics().increment(PolicyMetrics.Counter.SIGN_IN_WINDOWS);
@@ -139,6 +192,69 @@ public final class PopupRouterClient extends ArenaWebViewClient {
         host.loadVerifiedDestination(url, "popup");
         finish();
         return true;
+    }
+
+    /**
+     * True when this pop-up has finished its hand-off and landed back on Arena.ai's own page.
+     *
+     * <p>A successful OAuth window is expected to return to an Arena.ai callback URL, where the site
+     * reads the result and calls {@code window.close()} itself, or to the root page. Only the second
+     * shape needs help: if the window sits on the app's root page with no callback parameters left, the
+     * hand-off is over and the window has nothing further to show, so it closes itself rather than
+     * hanging open over the app.</p>
+     *
+     * <p>A callback URL is deliberately <em>not</em> matched - that is the page that reads the result,
+     * and closing it early would throw the result away.</p>
+     */
+    static boolean isHandOffComplete(String url) {
+        if (url == null || url.isEmpty()) {
+            return false;
+        }
+        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        int schemeEnd = lower.indexOf("://");
+        if (schemeEnd < 0 || !lower.startsWith("https://")) {
+            return false;
+        }
+        String rest = lower.substring(schemeEnd + 3);
+        int slash = rest.indexOf('/');
+        String host = slash < 0 ? rest : rest.substring(0, slash);
+        int colon = host.indexOf(':');
+        if (colon >= 0) {
+            host = host.substring(0, colon);
+        }
+        if (!host.equals("arena.ai") && !host.equals("www.arena.ai")) {
+            return false;
+        }
+        if (slash < 0) {
+            return true;
+        }
+        String pathAndQuery = rest.substring(slash);
+        int hash = pathAndQuery.indexOf('#');
+        if (hash >= 0) {
+            pathAndQuery = pathAndQuery.substring(0, hash);
+        }
+        int question = pathAndQuery.indexOf('?');
+        String path = question < 0 ? pathAndQuery : pathAndQuery.substring(0, question);
+        String query = question < 0 ? "" : pathAndQuery.substring(question + 1);
+        if (!path.isEmpty() && !"/".equals(path)) {
+            return false;
+        }
+        return query.isEmpty();
+    }
+
+    /**
+     * True when this window was opened from Arena's Agent page - the only page that can start a
+     * connector hand-off.
+     *
+     * <p>Deliberately narrow: an unknown opener (a plain {@code window.open()} whose opener we could not
+     * read) is treated as "not a connector flow", so the conservative fold-into-the-main-view behaviour
+     * stays the default.</p>
+     */
+    private boolean startsInConnectorFlow() {
+        if (!flowConnector) {
+            return false;
+        }
+        return openerUrl != null && openerUrl.contains("/agent");
     }
 
     /** about:blank, data: and blob: are the inert bootstrap locations of a brand new window. */
