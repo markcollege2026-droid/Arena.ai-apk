@@ -138,6 +138,15 @@ jobs:
           grep -hioE '.{0,120}(oauth/authorize|oauth2/authorize|/oauth/consent|connector[s]?|authorization_url|auth/staging|/callback|/oauth/callback|accounts\.google\.com|github\.com|api\.notion\.com|linear\.app|api\.supabase\.com|vercel\.com|dropbox\.com).{0,160}' \
             docs/evidence/site-audit/scripts/*.js 2>/dev/null \
             | sort -u | head -n 400 > docs/evidence/site-audit/scripts/hits.txt || true
+          # A second, tighter pass finds the client-side shape of the connector hand-off itself
+          # (the window.open call, the route that serves the authorize URL, and callback paths).
+          grep -hioE '.{0,160}(window\.open|/api/connectors|/api/coding|authorizeUrl|authorization_url|authUrl|oauth_url|redirect_uri|/oauth/[a-z_-]+).{0,200}' \
+            docs/evidence/site-audit/scripts/*.js 2>/dev/null \
+            | sort -u | head -n 300 > docs/evidence/site-audit/scripts/hits-oauth.txt || true
+          printf 'scripts discovered: %s, fetched: %s\n' \
+            "$(wc -l < docs/evidence/site-audit/scripts/index.txt)" \
+            "$(wc -l < docs/evidence/site-audit/scripts/index.resolved.tsv)" \
+            | tee -a docs/evidence/site-audit/scripts/hits-oauth.txt
 
           echo "=== probe summary (status / requested) ==="
           awk -F '\t' '{ printf "%-28s %s  %s\n", $1, $4, $2 }' docs/evidence/site-audit/probes.tsv
@@ -163,6 +172,11 @@ jobs:
             echo '```text'
             cat docs/evidence/site-audit/scripts/hits.txt || true
             echo '```'
+            echo
+            echo '## Connector hand-off / window.open references'
+            echo '```text'
+            cat docs/evidence/site-audit/scripts/hits-oauth.txt || true
+            echo '```'
           } > docs/evidence/site-audit/site-audit.md
           cat docs/evidence/site-audit/site-audit.md
 
@@ -173,7 +187,8 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add docs/evidence/site-audit/site-audit.md docs/evidence/site-audit/scripts/hits.txt
+          git add docs/evidence/site-audit/site-audit.md docs/evidence/site-audit/scripts/hits.txt \
+            docs/evidence/site-audit/scripts/hits-oauth.txt
           if git diff --cached --quiet; then
             echo 'No change to the derived audit report.'
             exit 0
