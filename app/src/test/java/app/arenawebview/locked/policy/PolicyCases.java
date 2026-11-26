@@ -61,11 +61,10 @@ public final class PolicyCases {
         both(cases, "explicit default HTTPS port", "https://arena.ai:443/chat", true, null);
         both(cases, "upper case scheme and host", "HTTPS://ARENA.AI/Chat", true, null);
         both(cases, "www host", "https://www.arena.ai/leaderboard", true, null);
-        both(cases, "auth service host", "https://auth.arena.ai/v1/client?_clerk_js_version=5", true, null);
-        both(cases, "cdn host", "https://cdn.arena.ai/_next/static/chunks/main.js", true, null);
+        sub(cases, "auth service endpoint (not a page)", "https://auth.arena.ai/v1/client?_clerk_js_version=5", true, null);
+        sub(cases, "cdn endpoint (not a page)", "https://cdn.arena.ai/_next/static/chunks/main.js", true, null);
         both(cases, "agent host", "https://agent.arena.ai/session/1", true, null);
         both(cases, "code host", "https://code.arena.ai/artifact/1", true, null);
-        both(cases, "blog host", "https://blog.arena.ai/post", true, null);
         both(cases, "help host", "https://help.arena.ai/article", true, null);
         both(cases, "status host", "https://status.arena.ai/", true, null);
         both(cases, "trust host", "https://trust.arena.ai/", true, null);

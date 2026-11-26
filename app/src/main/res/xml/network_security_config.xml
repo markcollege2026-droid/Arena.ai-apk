@@ -7,10 +7,10 @@
   * trust-anchors = system only: no user-added CAs, so an installed "debug" proxy certificate cannot
     be used to intercept the app's traffic.
   * No <debug-overrides> block exists in this file, so debug builds are just as strict as release.
-  * The <domain-config> entries mirror the hosts this build may display as pages: Arena.ai's own hosts
-    plus accounts.google.com, which the "Continue with Google" sign-in hand-off needs. Asset-only hosts
-    (CAPTCHA widgets, Google's static assets) are covered by the base config - they get no special
-    treatment and no looser rules.
+  * The <domain-config> entries mirror the hosts this build may display as pages: Arena.ai's own hosts,
+    accounts.google.com ("Continue with Google"), and the path-pinned OAuth hosts of the Agent Mode
+    connectors. Asset-only hosts (CAPTCHA widgets, Google's static assets, Arena's service endpoints)
+    are covered by the base config - they get no special treatment and no looser rules.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
@@ -26,12 +26,19 @@
         <domain includeSubdomains="false">agent.arena.ai</domain>
         <domain includeSubdomains="false">code.arena.ai</domain>
         <domain includeSubdomains="false">indexable.arena.ai</domain>
-        <domain includeSubdomains="false">blog.arena.ai</domain>
-        <domain includeSubdomains="false">news.arena.ai</domain>
         <domain includeSubdomains="false">help.arena.ai</domain>
         <domain includeSubdomains="false">status.arena.ai</domain>
         <domain includeSubdomains="false">trust.arena.ai</domain>
         <domain includeSubdomains="false">accounts.google.com</domain>
+        <domain includeSubdomains="false">github.com</domain>
+        <domain includeSubdomains="false">api.notion.com</domain>
+        <domain includeSubdomains="false">app.notion.com</domain>
+        <domain includeSubdomains="false">www.notion.so</domain>
+        <domain includeSubdomains="false">linear.app</domain>
+        <domain includeSubdomains="false">api.supabase.com</domain>
+        <domain includeSubdomains="false">supabase.com</domain>
+        <domain includeSubdomains="false">vercel.com</domain>
+        <domain includeSubdomains="false">www.dropbox.com</domain>
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
