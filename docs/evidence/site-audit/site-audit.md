@@ -1,7 +1,7 @@
 # Live site audit
 
-Run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45867025369
-UTC: 2026-11-26 17:22:24
+Run: https://github.com/markcollege2026-droid/Arena.ai-apk/actions/runs/45869475835
+UTC: 2026-11-26 17:39:44
 
 | Probe | HTTP | Requested | Effective |
 | --- | --- | --- | --- |
@@ -34,7 +34,7 @@ UTC: 2026-11-26 17:22:24
 | docs-agent | 200 | https://help.arena.ai/articles/5432423882-how-to-use-agent-mode | https://help.arena.ai/articles/5432423882-how-to-use-agent-mode |
 | docs-coding | 200 | https://help.arena.ai/articles/1655691990-how-to-use-coding-in-agent-mode | https://help.arena.ai/articles/1655691990-how-to-use-coding-in-agent-mode |
 | docs-account | 200 | https://help.arena.ai/articles/7258407731-arena-how-to-create-an-account | https://help.arena.ai/articles/7258407731-arena-how-to-create-an-account |
-| oauth-google | 200 | https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=example.invalid&redirect_uri=https%3A%2F%2Farena.ai%2F | https://accounts.google.com/signin/oauth/error?authError=Cg9pbnZhbGlkX3JlcXVlc3QSIU1pc3NpbmcgcmVxdWlyZWQgcGFyYW1ldGVyOiBzY29wZRo3aHR0cHM6Ly9kZXZlbG9wZXJzLmdvb2dsZS5jb20vaWRlbnRpdHkvcHJvdG9jb2xzL29hdXRoMiCQAw&flowName=GeneralOAuthFlow&client_id=example.invalid&as=S-887923147%3A1795713701619909&aes=AYsA2T1t8YatoJsXRk2psKE3xII0 |
+| oauth-google | 200 | https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=example.invalid&redirect_uri=https%3A%2F%2Farena.ai%2F | https://accounts.google.com/signin/oauth/error?authError=Cg9pbnZhbGlkX3JlcXVlc3QSIU1pc3NpbmcgcmVxdWlyZWQgcGFyYW1ldGVyOiBzY29wZRo3aHR0cHM6Ly9kZXZlbG9wZXJzLmdvb2dsZS5jb20vaWRlbnRpdHkvcHJvdG9jb2xzL29hdXRoMiCQAw&flowName=GeneralOAuthFlow&client_id=example.invalid&as=S-1424105181%3A1795714742610452&aes=AYsA2T1t8YatoJsXRk2psKE3xII0 |
 | oauth-github | 200 | https://github.com/login/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://github.com/login?client_id=example&return_to=%2Flogin%2Foauth%2Fauthorize%3Fclient_id%3Dexample%26redirect_uri%3Dhttps%253A%252F%252Farena.ai%252F%26response_type%3Dcode |
 | oauth-notion | 200 | https://api.notion.com/v1/oauth/authorize?owner=user&response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://app.notion.com/install-integration?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F&owner=user |
 | oauth-linear | 200 | https://linear.app/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://linear.app/oauth/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F |
@@ -43,7 +43,7 @@ UTC: 2026-11-26 17:22:24
 | oauth-dropbox | 200 | https://www.dropbox.com/oauth2/authorize?response_type=code&client_id=example&redirect_uri=https%3A%2F%2Farena.ai%2F | https://www.dropbox.com/oauth2/authorize_error?client_id=example&error_detail=Invalid+client_id%3A+%22example%22.&error_name=unknown_client_id |
 | link-jobs | 200 | https://jobs.ashbyhq.com/arena | https://jobs.ashbyhq.com/arena |
 | link-discord | 200 | https://discord.com/invite/LMArena | https://discord.com/invite/LMArena |
-| link-youtube | 429 | https://www.youtube.com/watch?v=79sSH0Y8FA4 | https://www.google.com/sorry/index?continue=https://www.youtube.com/watch%3Fv%3D79sSH0Y8FA4&q=EgQDKp2qGKfVodgGIjBb2oYD0h2mh82KaBPO6k31eMIhhhqPa2BHwxLyoMaTxCPF6k_VDKhL5pqzQOuYTeQyAnJSWgFDYNDQtab9ycz0Lw |
+| link-youtube | 429 | https://www.youtube.com/watch?v=79sSH0Y8FA4 | https://www.google.com/sorry/index?continue=https://www.youtube.com/watch%3Fv%3D79sSH0Y8FA4&q=EgQDKdJ0GLjdodgGIjD-_TnhH_1VgHRZCyJldh4b5LxIcKOleFgo3zDgSYjzBX6x7m4IdxJxT3getOtxNccyAnJSWgFDYNH2iP__-IeU0gE |
 | link-x | 200 | https://x.com/arena | https://x.com/arena |
 
 ## Script references to OAuth/connector hosts
