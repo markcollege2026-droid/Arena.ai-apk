@@ -66,6 +66,25 @@ jobs:
           set -o pipefail
           ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace 2>&1 | tee /tmp/unit-tests.log
 
+      - name: Summarise unit test results
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          total = failures = 0
+          for path in glob.glob('app/build/test-results/testDebugUnitTest/*.xml'):
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError:
+                  continue
+              for case in root.iter('testcase'):
+                  total += 1
+                  if case.find('failure') is not None or case.find('error') is not None:
+                      failures += 1
+          print(f'::notice title=JVM suite::{total} test cases reported, {failures} failed')
+          PY
+
       - name: Annotate unit test failures
         if: failure()
         shell: bash
@@ -194,6 +213,23 @@ jobs:
             sha256sum "$apk" | tee -a APK-SHA256SUMS.txt
           done
           cat APK-SHA256SUMS.txt
+
+      - name: Publish APK evidence as annotations
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          def esc(msg):
+              return msg.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          if os.path.exists('APK-SHA256SUMS.txt'):
+              print('::notice title=APK SHA-256 checksums::' + esc(open('APK-SHA256SUMS.txt').read().strip()))
+          if os.path.exists('apk-badging.txt'):
+              lines = [l for l in open('apk-badging.txt', errors='replace') if
+                       l.startswith(('package:', 'sdkVersion:', 'targetSdkVersion:',
+                                     'launchable-activity:', 'uses-permission:', 'application:'))]
+              print('::notice title=Release APK badging::' + esc('\n'.join(lines[:25])))
+          PY
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
