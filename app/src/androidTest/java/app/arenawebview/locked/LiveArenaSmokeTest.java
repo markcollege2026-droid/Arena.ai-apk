@@ -150,7 +150,9 @@ public class LiveArenaSmokeTest {
                 Log.w(TAG, "scroll check skipped: the probe returned nothing");
                 return;
             }
-            String json = raw.get();
+            // evaluateJavascript hands back the JSON as a *quoted, escaped* string literal
+            // ({\"vw\":393,...}), so the escapes have to be removed before it can be read.
+            String json = ScrollProbe.unescape(raw.get());
             Log.i(TAG, "live scroll probe: " + json);
 
             long vh = ScrollProbe.number(json, "vh");
@@ -184,6 +186,40 @@ public class LiveArenaSmokeTest {
     /** Small JSON reader for the probe above: flat object, numbers and strings only. */
     static final class ScrollProbe {
         private ScrollProbe() {
+        }
+
+        /**
+         * Removes the quoting {@code evaluateJavascript} adds: it returns the page's value as a JSON
+         * string literal, so {@code {"a":1}} arrives as {@code "{\"a\":1}"}. Without this, every key
+         * lookup silently misses and the probe reads as all zeroes.
+         */
+        static String unescape(String value) {
+            if (value == null) {
+                return null;
+            }
+            String v = value.trim();
+            if (v.length() >= 2 && v.charAt(0) == '"' && v.charAt(v.length() - 1) == '"') {
+                v = v.substring(1, v.length() - 1);
+            }
+            StringBuilder out = new StringBuilder(v.length());
+            for (int i = 0; i < v.length(); i++) {
+                char c = v.charAt(i);
+                if (c == '\\' && i + 1 < v.length()) {
+                    char next = v.charAt(i + 1);
+                    if (next == '"' || next == '\\' || next == '/') {
+                        out.append(next);
+                        i++;
+                        continue;
+                    }
+                    if (next == 'n') {
+                        out.append('\n');
+                        i++;
+                        continue;
+                    }
+                }
+                out.append(c);
+            }
+            return out.toString();
         }
 
         static long number(String json, String key) {
